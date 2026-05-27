@@ -14,8 +14,7 @@ void AmpProcessor::prepare(double sr, int blockSize)
     spec.maximumBlockSize = static_cast<uint32_t>(blockSize);
     spec.numChannels      = 1;
 
-    // Gate sidechain & boost filters run at base rate (outside oversampled loop)
-    gateSidechain.prepare(spec);
+    // Boost filters run at base rate
     boostHpf.prepare(spec);
     boostMid.prepare(spec);
     boostLpf.prepare(spec);
@@ -40,6 +39,9 @@ void AmpProcessor::prepare(double sr, int blockSize)
     cabMidScoop.prepare(osrSpec);
     cabPresence.prepare(osrSpec);
     cabLpf.prepare(osrSpec);
+
+    // Gate sidechain runs inside the oversampled loop — prepare at osr
+    gateSidechain.prepare(osrSpec);
 
     // Oversampling object (1 channel, 4× = 2^2)
     oversampling.initProcessing(static_cast<size_t>(blockSize));
@@ -67,12 +69,11 @@ void AmpProcessor::prepare(double sr, int blockSize)
     delayTimeSamples = static_cast<int>(sr * 0.350);
     delayFeedback    = 0.35f;
 
-    // Gate timing (base rate): 0.3 ms attack, 20 ms release
-    // Deliberately tight — mirrors the accidental fast timing the gate had when
-    // it ran inside the 4× oversampled loop with base-rate coefficients.
-    // Deathcore gate should snap open and close, not breathe.
-    gateAttCoeff = 1.0f - std::exp(-1.0f / (0.0003f * static_cast<float>(sr)));
-    gateRelCoeff = std::exp(-1.0f         / (0.020f  * static_cast<float>(sr)));
+    // Gate timing — computed at oversampled rate (gate runs in the osr loop)
+    // 0.3 ms attack, 20 ms release, both as heard by the user
+    const float osr_f = static_cast<float>(sr) * 4.0f;
+    gateAttCoeff = 1.0f - std::exp(-1.0f / (0.0003f * osr_f));
+    gateRelCoeff = std::exp(-1.0f         / (0.020f  * osr_f));
 
     // SAG timing (base rate)
     sagAttCoeff = 1.0f - std::exp(-1.0f / (0.002f * static_cast<float>(sr)));
@@ -99,10 +100,9 @@ void AmpProcessor::updateFilters()
     const float  g   = params.gain;
     const double osr = sampleRate * 4.0;   // oversampled rate
 
-    // ── Gate sidechain (base rate) ────────────────────────────────────────
-    // HPF at 100 Hz: removes mains hum but passes all guitar fundamentals
-    // regardless of tuning (drop A, drop B, etc.)
-    gateSidechain.coefficients = Coeffs::makeHighPass(sampleRate, 100.0, 0.707);
+    // ── Gate sidechain (oversampled rate) ────────────────────────────────
+    // HPF at 100 Hz removes mains hum; all guitar content passes through.
+    gateSidechain.coefficients = Coeffs::makeHighPass(osr, 100.0, 0.707);
 
     // ── Pre-boost filters (base rate) ─────────────────────────────────────
     // Tube Screamer character: tight HPF + midrange hump + soft rolloff
@@ -340,15 +340,6 @@ void AmpProcessor::process(juce::AudioBuffer<float>& buffer)
     const int numSamples = buffer.getNumSamples();
     float* ch0 = buffer.getWritePointer(0);
 
-    // ── Gate at base rate — on raw signal, before boost ──
-    // Must run first so the sidechain sees the true guitar level,
-    // not the boosted/compressed/HPF'd post-808 signal.
-    if (gateThresh > 0.0f)
-    {
-        for (int i = 0; i < numSamples; ++i)
-            ch0[i] = applyGateSample(ch0[i]);
-    }
-
     // ── Pre-boost (808 / Tube Screamer) — runs at base rate ──
     if (params.boost)
     {
@@ -374,6 +365,7 @@ void AmpProcessor::process(juce::AudioBuffer<float>& buffer)
         for (int i = 0; i < upSamples; ++i)
         {
             float x = preHpf.processSample(up[i]);
+            x = applyGateSample(x);
 
             switch (params.channel)
             {
