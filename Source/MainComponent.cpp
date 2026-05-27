@@ -50,88 +50,166 @@ static const Preset kPresets[] =
 // ── UmbraLAF ───────────────────────────────────────────────────────────────
 
 static const juce::Colour kAccent   { 0xffcc2200 };
-static const juce::Colour kAccentHi { 0xffff4400 };
-static const juce::Colour kPanel    { 0xff141414 };
-static const juce::Colour kDark     { 0xff0a0a0a };
+static const juce::Colour kAccentHi { 0xffff5522 };
+static const juce::Colour kAccentGlow { 0x55cc2200 };
+static const juce::Colour kPanel    { 0xff131110 };
+static const juce::Colour kPanelHi  { 0xff1c1a18 };
+static const juce::Colour kDark     { 0xff070604 };
 
 void UmbraLAF::drawRotarySlider(juce::Graphics& g,
                                  int x, int y, int w, int h,
                                  float pos, float startAngle, float endAngle,
                                  juce::Slider&)
 {
-    const auto b  = juce::Rectangle<float>(x, y, w, h).reduced(5.0f);
-    const auto c  = b.getCentre();
-    const float r = juce::jmin(b.getWidth(), b.getHeight()) * 0.5f;
+    const auto bounds = juce::Rectangle<float>(x, y, w, h).reduced(4.0f);
+    const auto c      = bounds.getCentre();
+    const float r     = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.5f;
+    const float angle = startAngle + (endAngle - startAngle) * pos;
 
-    // Shadow
-    g.setColour(kDark);
-    g.fillEllipse(b.expanded(2.0f));
+    // ── 1. Drop shadow ──
+    g.setColour(juce::Colour(0xaa000000));
+    g.fillEllipse(bounds.translated(0.0f, 1.5f));
 
-    // Body
-    juce::ColourGradient grad(juce::Colour(0xff2e2e2e), c.x - r * 0.4f, c.y - r * 0.4f,
-                              juce::Colour(0xff0e0e0e), c.x + r * 0.4f, c.y + r * 0.4f, true);
-    g.setGradientFill(grad);
-    g.fillEllipse(b);
-    g.setColour(juce::Colour(0x22ffffff));
-    g.drawEllipse(b, 1.0f);
+    // ── 2. Outer bezel — gunmetal ring ──
+    {
+        juce::ColourGradient cg(juce::Colour(0xff3a3733), c.x - r * 0.5f, c.y - r * 0.5f,
+                                juce::Colour(0xff0e0d0c), c.x + r * 0.6f, c.y + r * 0.7f, true);
+        g.setGradientFill(cg);
+        g.fillEllipse(bounds);
+    }
+    // Bezel highlight rim (top-left edge only)
+    g.setColour(juce::Colour(0x28ffffff));
+    g.drawEllipse(bounds.reduced(0.5f), 1.0f);
 
-    // Track
-    auto ab = b.reduced(4.0f);
-    juce::Path track;
-    track.addArc(ab.getX(), ab.getY(), ab.getWidth(), ab.getHeight(), startAngle, endAngle, true);
-    g.setColour(juce::Colour(0xff2a2a2a));
-    g.strokePath(track, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    // ── 3. Track groove ──
+    const auto trackB = bounds.reduced(r * 0.22f);
+    juce::Path groove;
+    groove.addArc(trackB.getX(), trackB.getY(), trackB.getWidth(), trackB.getHeight(),
+                  startAngle, endAngle, true);
+    g.setColour(juce::Colour(0xff060504));
+    g.strokePath(groove, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+    g.setColour(juce::Colour(0xff1e1c1a));
+    g.strokePath(groove, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
 
-    // Value arc
-    const float va = startAngle + (endAngle - startAngle) * pos;
-    juce::Path varc;
-    varc.addArc(ab.getX(), ab.getY(), ab.getWidth(), ab.getHeight(), startAngle, va, true);
-    g.setColour(kAccent);
-    g.strokePath(varc, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    // ── 4. Value arc — outer glow then bright fill ──
+    if (pos > 0.001f)
+    {
+        juce::Path varc;
+        varc.addArc(trackB.getX(), trackB.getY(), trackB.getWidth(), trackB.getHeight(),
+                    startAngle, angle, true);
+        // Glow halo
+        g.setColour(kAccentGlow);
+        g.strokePath(varc, juce::PathStrokeType(5.5f, juce::PathStrokeType::curved,
+                                                 juce::PathStrokeType::rounded));
+        // Bright arc
+        g.setColour(kAccentHi);
+        g.strokePath(varc, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
+                                                 juce::PathStrokeType::rounded));
+    }
 
-    // Indicator line
-    const auto le = c.getPointOnCircumference(r * 0.72f, va);
-    const auto ls = c.getPointOnCircumference(r * 0.22f, va);
-    g.setColour(kAccentHi);
-    g.drawLine(juce::Line<float>(ls, le), 2.0f);
+    // ── 5. Knob body — inset metallic cap ──
+    const auto bodyB = bounds.reduced(r * 0.30f);
+    {
+        juce::ColourGradient cg(juce::Colour(0xff3e3b37), c.x - r * 0.2f, c.y - r * 0.3f,
+                                juce::Colour(0xff141210), c.x + r * 0.3f, c.y + r * 0.4f, true);
+        g.setGradientFill(cg);
+        g.fillEllipse(bodyB);
+    }
 
-    // Centre cap
-    g.setColour(juce::Colour(0xff1e1e1e));
-    g.fillEllipse(c.x - 4.0f, c.y - 4.0f, 8.0f, 8.0f);
+    // ── 6. Specular highlight (top-left lens reflection) ──
+    {
+        juce::ColourGradient cg(juce::Colour(0x38ffffff), c.x - r * 0.18f, c.y - r * 0.22f,
+                                juce::Colour(0x00ffffff), c.x + r * 0.05f, c.y + r * 0.05f, true);
+        g.setGradientFill(cg);
+        g.fillEllipse(bodyB);
+    }
+
+    // ── 7. Pointer dot ──
+    const float bodyR  = juce::jmin(bodyB.getWidth(), bodyB.getHeight()) * 0.5f;
+    const float dotR   = juce::jmax(2.0f, bodyR * 0.14f);
+    const float dotDst = bodyR - dotR * 1.5f;
+    const auto  dotPos = c.getPointOnCircumference(dotDst, angle);
+    // Shadow under dot
+    g.setColour(juce::Colour(0x88000000));
+    g.fillEllipse(dotPos.x - dotR + 0.6f, dotPos.y - dotR + 0.7f, dotR * 2.0f, dotR * 2.0f);
+    // Dot — bright white when non-zero, dimmed at minimum
+    g.setColour(pos > 0.01f ? juce::Colour(0xfff0eee8) : juce::Colour(0xff555250));
+    g.fillEllipse(dotPos.x - dotR, dotPos.y - dotR, dotR * 2.0f, dotR * 2.0f);
 }
 
 void UmbraLAF::drawButtonBackground(juce::Graphics& g, juce::Button& btn,
                                      const juce::Colour&, bool highlighted, bool down)
 {
     auto b = btn.getLocalBounds().toFloat().reduced(0.5f);
-    const bool tog = btn.getToggleState();
+    const bool tog  = btn.getToggleState();
+    const auto text = btn.getButtonText();
 
-    juce::Colour bg = tog    ? kAccent.darker(0.2f)
-                    : down   ? juce::Colour(0xff2a2a2a)
-                    : highlighted ? juce::Colour(0xff222222)
-                                  : juce::Colour(0xff1a1a1a);
+    // Background fill
+    juce::Colour bg = tog    ? kPanel.brighter(0.08f)
+                    : down   ? juce::Colour(0xff252320)
+                    : highlighted ? juce::Colour(0xff1e1c1a)
+                                  : juce::Colour(0xff161412);
     g.setColour(bg);
     g.fillRoundedRectangle(b, 3.0f);
 
-    juce::Colour border = tog ? kAccent : juce::Colour(0xff333333);
+    // Border — accent colour when active, subtle otherwise
+    juce::Colour border = tog ? kAccent.withAlpha(0.85f) : juce::Colour(0xff2e2c2a);
     g.setColour(border);
     g.drawRoundedRectangle(b, 3.0f, 1.0f);
+
+    // ── Channel LED indicator dot (left side of button) ──
+    const bool isChannel = (text == "CLEAN" || text == "CRUNCH" || text == "LEAD");
+    if (isChannel)
+    {
+        const juce::Colour ledOn  = (text == "CLEAN")  ? juce::Colour(0xff33bbff)
+                                  : (text == "CRUNCH") ? juce::Colour(0xffff8833)
+                                                       : juce::Colour(0xffff2200);
+        const juce::Colour ledOff = ledOn.withAlpha(0.18f).withBrightness(0.2f);
+        const float dotR = 3.0f;
+        const float dotX = b.getX() + 8.0f;
+        const float dotY = b.getCentreY();
+        if (tog)
+        {
+            // Glow
+            g.setColour(ledOn.withAlpha(0.35f));
+            g.fillEllipse(dotX - dotR * 2.0f, dotY - dotR * 2.0f, dotR * 4.0f, dotR * 4.0f);
+            g.setColour(ledOn);
+            g.fillEllipse(dotX - dotR, dotY - dotR, dotR * 2.0f, dotR * 2.0f);
+            // Specular
+            g.setColour(juce::Colours::white.withAlpha(0.55f));
+            g.fillEllipse(dotX - dotR * 0.45f, dotY - dotR * 0.75f, dotR * 0.8f, dotR * 0.6f);
+        }
+        else
+        {
+            g.setColour(ledOff);
+            g.fillEllipse(dotX - dotR, dotY - dotR, dotR * 2.0f, dotR * 2.0f);
+        }
+    }
 }
 
-void UmbraLAF::drawButtonText(juce::Graphics& g, juce::TextButton& btn,
-                               bool, bool)
+void UmbraLAF::drawButtonText(juce::Graphics& g, juce::TextButton& btn, bool, bool)
 {
-    juce::Colour col = btn.getToggleState() ? juce::Colours::white
-                                            : juce::Colour(0xffaaaaaa);
+    const bool tog  = btn.getToggleState();
+    const auto text = btn.getButtonText();
+    const bool isChannel = (text == "CLEAN" || text == "CRUNCH" || text == "LEAD");
+
+    // Shift text right on channel buttons to leave room for the LED
+    const auto textBounds = isChannel
+        ? btn.getLocalBounds().withTrimmedLeft(8)
+        : btn.getLocalBounds();
+
+    juce::Colour col = tog ? juce::Colours::white : juce::Colour(0xff888480);
     g.setColour(col);
-    g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f).withStyle("Bold")));
-    g.drawText(btn.getButtonText(), btn.getLocalBounds(), juce::Justification::centred, false);
+    g.setFont(juce::Font(juce::FontOptions().withHeight(10.5f).withStyle("Bold")));
+    g.drawText(text, textBounds, juce::Justification::centred, false);
 }
 
 void UmbraLAF::drawLabel(juce::Graphics& g, juce::Label& lbl)
 {
-    g.setColour(juce::Colour(0xff888888));
-    g.setFont(juce::Font(juce::FontOptions().withHeight(10.5f)));
+    g.setColour(juce::Colour(0xff6a6560));
+    g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     g.drawText(lbl.getText(), lbl.getLocalBounds(), juce::Justification::centred, false);
 }
 
@@ -141,29 +219,57 @@ LevelMeter::LevelMeter(AmpProcessor& p) : proc(p) { startTimerHz(30); }
 
 void LevelMeter::paint(juce::Graphics& g)
 {
-    auto b = getLocalBounds().toFloat().reduced(2.0f);
+    auto b = getLocalBounds().toFloat().reduced(1.0f);
+
+    // Well/background
     g.setColour(kDark);
     g.fillRoundedRectangle(b, 4.0f);
-    g.setColour(juce::Colour(0xff202020));
-    g.drawRoundedRectangle(b, 4.0f, 1.0f);
+    g.setColour(juce::Colour(0xff1e1c1a));
+    g.drawRoundedRectangle(b, 4.0f, 0.5f);
 
-    // ×2 scale: green below −6 dBFS, yellow −6 to −1.7, red above −1.7
-    const float lv = juce::jlimit(0.0f, 1.0f, display * 2.0f);
-    if (lv > 0.0f)
-    {
-        auto fill = b;
-        const float fh = fill.getHeight() * lv;
-        fill = fill.removeFromBottom(fh);
-        juce::Colour col = lv < 0.55f ? juce::Colour(0xff22cc44)
-                         : lv < 0.82f ? juce::Colour(0xffddaa00)
-                                      : juce::Colour(0xffdd2200);
-        g.setColour(col);
-        g.fillRoundedRectangle(fill, 3.0f);
-    }
-
-    g.setColour(juce::Colour(0xff555555));
-    g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    // "OUT" label
+    g.setColour(juce::Colour(0xff3a3632));
+    g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
     g.drawText("OUT", getLocalBounds(), juce::Justification::centredTop, false);
+
+    // Segmented LEDs — 13 segments (bottom to top)
+    // Segments 0-8: green, 9-10: yellow, 11-12: red
+    constexpr int kSegs = 13;
+    const float  padT   = 14.0f;   // space for "OUT" label
+    const float  padB   = 3.0f;
+    const float  gap    = 1.5f;
+    const float  totalH = b.getHeight() - padT - padB;
+    const float  segH   = (totalH - gap * (kSegs - 1)) / kSegs;
+    const float  segW   = b.getWidth() - 6.0f;
+    const float  segX   = b.getX() + 3.0f;
+
+    // Level: scale ×2 so signal at 0.5 fills meter to yellow
+    const float level = juce::jlimit(0.0f, 1.0f, display * 2.0f);
+    const int   lit   = static_cast<int>(level * kSegs + 0.4f);
+
+    for (int i = 0; i < kSegs; ++i)
+    {
+        const float segY = b.getBottom() - padB - (i + 1) * segH - i * gap;
+        const bool  on   = (i < lit);
+
+        juce::Colour col;
+        if (i >= kSegs - 2)        // top 2 = red
+            col = on ? juce::Colour(0xffee2200) : juce::Colour(0xff1e0500);
+        else if (i >= kSegs - 4)   // next 2 = yellow
+            col = on ? juce::Colour(0xffddcc00) : juce::Colour(0xff1a1500);
+        else                       // bottom 9 = green
+            col = on ? juce::Colour(0xff11dd44) : juce::Colour(0xff052010);
+
+        g.setColour(col);
+        g.fillRoundedRectangle(segX, segY, segW, segH, 1.0f);
+
+        // Tiny specular sheen on lit segments
+        if (on)
+        {
+            g.setColour(juce::Colour(0x18ffffff));
+            g.fillRoundedRectangle(segX, segY, segW, segH * 0.4f, 1.0f);
+        }
+    }
 }
 
 void LevelMeter::timerCallback()
@@ -236,7 +342,7 @@ MainComponent::MainComponent()
     addAndMakeVisible(meter);
 
     setAudioChannels(2, 2);
-    setSize(920, 370);
+    setSize(920, 390);
 }
 
 MainComponent::~MainComponent()
@@ -436,47 +542,99 @@ void MainComponent::openIRChooser()
 void MainComponent::paint(juce::Graphics& g)
 {
     const int W = getWidth();
+    const int H = getHeight();
 
-    // Background
-    g.fillAll(juce::Colour(0xff0d0d0d));
+    // ── Full background ──
+    g.fillAll(juce::Colour(0xff0d0b09));
 
-    // Header gradient
-    const auto header = juce::Rectangle<int>(0, 0, W, 48).toFloat();
-    g.setGradientFill(juce::ColourGradient(
-        juce::Colour(0xff1e1e1e), 0, 0,
-        juce::Colour(0xff111111), 0, 48, false));
-    g.fillRect(header);
-
-    // Accent line under header
+    // ── Header ──
+    {
+        juce::ColourGradient hg(juce::Colour(0xff201e1c), 0.0f, 0.0f,
+                                juce::Colour(0xff0e0c0b), 0.0f, 48.0f, false);
+        g.setGradientFill(hg);
+        g.fillRect(0, 0, W, 48);
+    }
+    // Thin accent bar under header
     g.setColour(kAccent);
     g.fillRect(0.0f, 46.0f, (float)W, 2.0f);
 
-    // App name
-    g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(juce::FontOptions().withHeight(24.0f).withStyle("Bold")));
-    g.drawText("UMBRA", juce::Rectangle<int>(0, 0, 160, 48), juce::Justification::centred, false);
+    // ── UMBRA wordmark ──
+    // Red "U" + white "MBRA"
+    g.setFont(juce::Font(juce::FontOptions().withHeight(26.0f).withStyle("Bold")));
+    const int nameX = 18, nameY = 0, nameH = 46;
+    g.setColour(kAccentHi);
+    g.drawText("U", nameX, nameY, 18, nameH, juce::Justification::centredLeft, false);
+    g.setColour(juce::Colour(0xfff0eee8));
+    g.drawText("MBRA", nameX + 16, nameY, 76, nameH, juce::Justification::centredLeft, false);
 
-    // Subtitle
-    g.setColour(kAccent);
-    g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-    g.drawText("AMP SIMULATOR", juce::Rectangle<int>(0, 30, 160, 16), juce::Justification::centred, false);
+    // Model badge below wordmark
+    g.setFont(juce::Font(juce::FontOptions().withHeight(8.5f)));
+    g.setColour(juce::Colour(0xff504844));
+    g.drawText("AMP SIMULATOR", nameX, 32, 120, 13, juce::Justification::centredLeft, false);
 
-    // Preset/IR row background
-    g.setColour(juce::Colour(0xff111111));
+    // ── Preset row ──
+    g.setColour(juce::Colour(0xff0e0c0b));
     g.fillRect(0, 48, W, 38);
-    g.setColour(juce::Colour(0xff1e1e1e));
-    g.fillRect(0, 86, W, 1);
+    // Subtle bottom edge
+    g.setColour(juce::Colour(0xff282420));
+    g.fillRect(0, 85, W, 1);
 
-    // Knob panel
+    // ── Knob panel ──
+    const auto panelBounds = juce::Rectangle<int>(8, 92, W - 16, H - 100).toFloat();
+    // Panel background
     g.setColour(kPanel);
-    g.fillRoundedRectangle(juce::Rectangle<int>(8, 94, W - 16, getHeight() - 102).toFloat(), 6.0f);
-    g.setColour(juce::Colour(0xff262626));
-    g.drawRoundedRectangle(juce::Rectangle<int>(8, 94, W - 16, getHeight() - 102).toFloat(), 6.0f, 1.0f);
+    g.fillRoundedRectangle(panelBounds, 6.0f);
+    // Inner top-edge highlight
+    g.setColour(juce::Colour(0xff242220));
+    g.drawLine(panelBounds.getX() + 6, panelBounds.getY() + 1,
+               panelBounds.getRight() - 6, panelBounds.getY() + 1, 1.0f);
+    // Outer border
+    g.setColour(juce::Colour(0xff2a2724));
+    g.drawRoundedRectangle(panelBounds, 6.0f, 1.0f);
 
-    // Channel section label
-    g.setColour(juce::Colour(0xff444444));
-    g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-    g.drawText("CHANNEL", juce::Rectangle<int>(160, 0, 260, 14), juce::Justification::centred, false);
+    // ── Section labels + separators ──
+    // Compute slot width the same way resized() does
+    {
+        const int meterX = W - 26 - 14;
+        const int kAreaW = meterX - 16;
+        const int slotW  = kAreaW / 12;
+        const int panelTop = 92;
+        const int panelH   = H - 100;
+
+        // Sections: INPUT(0-1), TONE(2-5), OUTPUT(6-8), FX(9-11)
+        struct Sec { int start, count; const char* name; } secs[] = {
+            { 0, 2, "INPUT" }, { 2, 4, "TONE" }, { 6, 3, "OUTPUT" }, { 9, 3, "FX" }
+        };
+
+        g.setFont(juce::Font(juce::FontOptions().withHeight(8.5f)));
+
+        for (auto& s : secs)
+        {
+            const int sx = 12 + s.start * slotW;
+            const int sw = s.count * slotW;
+
+            // Section label
+            g.setColour(juce::Colour(0xff484240));
+            g.drawText(s.name, sx, panelTop + 6, sw, 13, juce::Justification::centred, false);
+
+            // Separator after section (not after the last one)
+            if (s.start + s.count < 12)
+            {
+                const int sepX = 12 + (s.start + s.count) * slotW;
+                // Dark slot
+                g.setColour(juce::Colour(0xff0a0908));
+                g.fillRect(sepX - 1, panelTop + 20, 2, panelH - 26);
+                // Lighter half
+                g.setColour(juce::Colour(0xff222220));
+                g.fillRect(sepX, panelTop + 20, 1, panelH - 26);
+            }
+        }
+    }
+
+    // ── "CHANNEL" micro-label above header buttons ──
+    g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
+    g.setColour(juce::Colour(0xff3a3632));
+    g.drawText("CHANNEL", 162, 1, 230, 10, juce::Justification::centred, false);
 }
 
 // ── Resized ────────────────────────────────────────────────────────────────
@@ -515,20 +673,23 @@ void MainComponent::resized()
                           irRight - irClearW - irLoadW - 4 - irLabelX - 6,
                           rowH);
 
-    // ── Knob area (y=94 downward) ── 12 knobs
-    const int knobAreaTop = 98;
-    const int knobAreaH   = getHeight() - knobAreaTop - 10;
-    const int meterW      = 26;
-    const int meterX      = W - meterW - 14;
+    // ── Knob area (y=92 downward) ── 12 knobs + section labels
+    const int knobAreaTop  = 92;
+    const int knobAreaH    = getHeight() - knobAreaTop - 8;
+    const int meterW       = 26;
+    const int meterX       = W - meterW - 14;
+    const int secLabelH    = 22;   // height reserved for section labels at panel top
 
-    meter.setBounds(meterX, knobAreaTop + 6, meterW, knobAreaH - 12);
+    meter.setBounds(meterX, knobAreaTop + 8, meterW, knobAreaH - 14);
 
     const int numKnobs = 12;
     const int kAreaW   = meterX - 16;
     const int slotW    = kAreaW / numKnobs;
-    const int knobSize = juce::jmin(knobAreaH - 32, slotW - 6);
+    const int knobSize = juce::jmin(knobAreaH - secLabelH - 34, slotW - 6);
     const int labelH   = 14;
-    const int knobY    = knobAreaTop + (knobAreaH - knobSize - labelH) / 2;
+    // Center knobs in the remaining space below the section-label strip
+    const int knobY    = knobAreaTop + secLabelH
+                         + (knobAreaH - secLabelH - knobSize - labelH) / 2;
 
     auto place = [&](juce::Slider& k, juce::Label& l, int idx)
     {
