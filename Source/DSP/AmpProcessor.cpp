@@ -67,9 +67,12 @@ void AmpProcessor::prepare(double sr, int blockSize)
     delayTimeSamples = static_cast<int>(sr * 0.350);
     delayFeedback    = 0.35f;
 
-    // Gate timing (base rate): 1 ms attack, 120 ms release
-    gateAttCoeff = 1.0f - std::exp(-1.0f / (0.001f  * static_cast<float>(sr)));
-    gateRelCoeff = std::exp(-1.0f         / (0.120f  * static_cast<float>(sr)));
+    // Gate timing (base rate): 0.3 ms attack, 20 ms release
+    // Deliberately tight — mirrors the accidental fast timing the gate had when
+    // it ran inside the 4× oversampled loop with base-rate coefficients.
+    // Deathcore gate should snap open and close, not breathe.
+    gateAttCoeff = 1.0f - std::exp(-1.0f / (0.0003f * static_cast<float>(sr)));
+    gateRelCoeff = std::exp(-1.0f         / (0.020f  * static_cast<float>(sr)));
 
     // SAG timing (base rate)
     sagAttCoeff = 1.0f - std::exp(-1.0f / (0.002f * static_cast<float>(sr)));
