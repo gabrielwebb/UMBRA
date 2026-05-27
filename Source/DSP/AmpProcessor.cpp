@@ -67,9 +67,9 @@ void AmpProcessor::prepare(double sr, int blockSize)
     delayTimeSamples = static_cast<int>(sr * 0.350);
     delayFeedback    = 0.35f;
 
-    // Gate timing (base rate)
-    gateAttCoeff = 1.0f - std::exp(-1.0f / (0.001f * static_cast<float>(sr)));
-    gateRelCoeff = std::exp(-1.0f / (0.060f * static_cast<float>(sr)));
+    // Gate timing (base rate): 1 ms attack, 120 ms release
+    gateAttCoeff = 1.0f - std::exp(-1.0f / (0.001f  * static_cast<float>(sr)));
+    gateRelCoeff = std::exp(-1.0f         / (0.120f  * static_cast<float>(sr)));
 
     // SAG timing (base rate)
     sagAttCoeff = 1.0f - std::exp(-1.0f / (0.002f * static_cast<float>(sr)));
@@ -97,7 +97,9 @@ void AmpProcessor::updateFilters()
     const double osr = sampleRate * 4.0;   // oversampled rate
 
     // ── Gate sidechain (base rate) ────────────────────────────────────────
-    gateSidechain.coefficients = Coeffs::makeBandPass(sampleRate, 800.0, 1.5f);
+    // HPF at 100 Hz: removes mains hum but passes all guitar fundamentals
+    // regardless of tuning (drop A, drop B, etc.)
+    gateSidechain.coefficients = Coeffs::makeHighPass(sampleRate, 100.0, 0.707);
 
     // ── Pre-boost filters (base rate) ─────────────────────────────────────
     // Tube Screamer character: tight HPF + midrange hump + soft rolloff
@@ -335,6 +337,15 @@ void AmpProcessor::process(juce::AudioBuffer<float>& buffer)
     const int numSamples = buffer.getNumSamples();
     float* ch0 = buffer.getWritePointer(0);
 
+    // ── Gate at base rate — on raw signal, before boost ──
+    // Must run first so the sidechain sees the true guitar level,
+    // not the boosted/compressed/HPF'd post-808 signal.
+    if (gateThresh > 0.0f)
+    {
+        for (int i = 0; i < numSamples; ++i)
+            ch0[i] = applyGateSample(ch0[i]);
+    }
+
     // ── Pre-boost (808 / Tube Screamer) — runs at base rate ──
     if (params.boost)
     {
@@ -347,20 +358,6 @@ void AmpProcessor::process(juce::AudioBuffer<float>& buffer)
             ch0[i] = x * 0.65f;                    // normalize
         }
     }
-
-    // ── Gate at base rate (before upsampling) ──
-    // Running at base rate gives correct timing (1 ms attack / 60 ms release)
-    // and the sidechain bandpass filter operates at the right frequency.
-    if (gateThresh > 0.0f)
-    {
-        for (int i = 0; i < numSamples; ++i)
-            ch0[i] = applyGateSample(ch0[i]);
-    }
-
-    // ── Gate sidechain detection happens at base rate (in applyGateSample) ──
-    // We need to pre-feed the sidechain before upsampling so it tracks
-    // the real input envelope. We do this inside the oversampled loop below
-    // using the upsampled signal, which is equivalent for envelope purposes.
 
     // ── Upsample → nonlinear chain → downsample ──
     {
