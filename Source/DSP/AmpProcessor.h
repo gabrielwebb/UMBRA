@@ -16,10 +16,14 @@ public:
         float treble     = 0.5f;
         float presence   = 0.5f;
         float volume     = 0.5f;
-        // FX (used by TWINKLE and any preset that wants shimmer)
+        // FX
         float reverb     = 0.0f;   // 0-1 wet amount
         float chorus     = 0.0f;   // 0-1 mix
         float delay      = 0.0f;   // 0-1 mix (fixed 350 ms)
+        // New
+        bool  boost      = false;  // 808/Tube Screamer pre-boost
+        float sag        = 0.0f;   // 0-1 rectifier sag amount
+        float trem       = 0.0f;   // 0-1 tremolo depth
     };
 
     void prepare(double sampleRate, int blockSize);
@@ -48,6 +52,13 @@ private:
     {
         return juce::jlimit(-t, t, x);
     }
+    // Asymmetric triode plate clip: soft positive rail, harder negative rail
+    static float triodeClip(float x, float drive) noexcept
+    {
+        x *= drive;
+        return (x >= 0.0f) ? 1.0f - std::exp(-x)
+                           : -1.0f + std::exp(x * 1.3f);
+    }
 
     using Filt = juce::dsp::IIR::Filter<float>;
 
@@ -58,6 +69,20 @@ private:
     Filt bassFilter, midFilter, trebleFilter;
     Filt presenceFilter;
     Filt cabHpf, cabMidScoop, cabLpf;
+
+    // ── Gate sidechain ────────────────────────────────────────────────────
+    Filt gateSidechain;   // bandpass ~800 Hz — avoids false triggers from hum
+
+    // ── Pre-boost (808 / Tube Screamer) ───────────────────────────────────
+    Filt  boostHpf;       // HPF 720 Hz — cut muddy lows
+    Filt  boostLpf;       // LPF 3500 Hz — smooth highs
+    float boostDrive = 6.0f;
+
+    // ── Oversampling (4×) ─────────────────────────────────────────────────
+    juce::dsp::Oversampling<float> oversampling {
+        1, 2,
+        juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR
+    };
 
     juce::dsp::Convolution convolution;
     std::atomic<bool> irLoaded { false };
@@ -79,6 +104,15 @@ private:
     float gateRelCoeff = 0.0f;
     float gateThresh   = 0.0f;
 
+    // ── SAG (rectifier sag) ───────────────────────────────────────────────
+    float sagEnvelope  = 0.0f;
+    float sagAttCoeff  = 0.0f;   // ~2 ms
+    float sagRelCoeff  = 0.0f;   // ~150 ms
+
+    // ── Tremolo LFO ───────────────────────────────────────────────────────
+    float lfoPhase    = 0.0f;
+    float lfoRate     = 5.0f;   // Hz
+
     // ── Cached drive values ───────────────────────────────────────────────
     float cleanDrive   = 1.0f;
     float cleanNorm    = 1.0f;
@@ -91,7 +125,6 @@ private:
 
     double sampleRate = 44100.0;
     Params params;
-    Channel lastChannel = Channel::Lead;
 
     std::atomic<float> outputLevel { 0.0f };
 };

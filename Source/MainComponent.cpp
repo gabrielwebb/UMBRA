@@ -1,38 +1,50 @@
 #include "MainComponent.h"
 
 // ── Presets ────────────────────────────────────────────────────────────────
+// Preset fields: name, channel, boost, gate, gain, bass, mid, treble, presence, volume,
+//                reverb, chorus, delay, sag, trem
 static const Preset kPresets[] =
 {
-    // Deathcore: 6505+ — 4-stage lead, heavy mid scoop, tight gate
+    // Deathcore: 6505+ — max gain, 808 boost, scooped mids, tight gate
     { "DEATHCORE", AmpProcessor::Channel::Lead,
-      /*gate*/0.75f, /*gain*/0.88f, /*bass*/0.57f, /*mid*/0.10f,
-      /*treble*/0.68f, /*presence*/0.82f, /*volume*/0.55f,
-      /*reverb*/0.00f, /*chorus*/0.00f, /*delay*/0.00f },
+      /*boost*/true,
+      /*gate*/0.78f, /*gain*/0.90f, /*bass*/0.60f, /*mid*/0.08f,
+      /*treble*/0.72f, /*presence*/0.85f, /*volume*/0.55f,
+      /*reverb*/0.00f, /*chorus*/0.00f, /*delay*/0.00f,
+      /*sag*/0.00f, /*trem*/0.00f },
 
-    // Shadow (Deftones/shoegaze): warm crunch, loose gate, dark treble
+    // Shadow (Deftones/shoegaze): warm crunch, rectifier sag, loose gate
     { "SHADOW", AmpProcessor::Channel::Crunch,
-      /*gate*/0.18f, /*gain*/0.55f, /*bass*/0.65f, /*mid*/0.52f,
-      /*treble*/0.36f, /*presence*/0.34f, /*volume*/0.55f,
-      /*reverb*/0.22f, /*chorus*/0.15f, /*delay*/0.00f },
+      /*boost*/false,
+      /*gate*/0.20f, /*gain*/0.58f, /*bass*/0.62f, /*mid*/0.55f,
+      /*treble*/0.38f, /*presence*/0.38f, /*volume*/0.55f,
+      /*reverb*/0.28f, /*chorus*/0.18f, /*delay*/0.00f,
+      /*sag*/0.45f, /*trem*/0.00f },
 
-    // Hybrid (Linkin Park): punchy crunch, slight scoop, bright
+    // Hybrid (Linkin Park): punchy crunch, mid-forward, light sag
     { "HYBRID", AmpProcessor::Channel::Crunch,
-      /*gate*/0.42f, /*gain*/0.70f, /*bass*/0.52f, /*mid*/0.38f,
-      /*treble*/0.62f, /*presence*/0.60f, /*volume*/0.55f,
-      /*reverb*/0.08f, /*chorus*/0.00f, /*delay*/0.00f },
+      /*boost*/false,
+      /*gate*/0.40f, /*gain*/0.72f, /*bass*/0.50f, /*mid*/0.42f,
+      /*treble*/0.62f, /*presence*/0.62f, /*volume*/0.55f,
+      /*reverb*/0.10f, /*chorus*/0.00f, /*delay*/0.00f,
+      /*sag*/0.22f, /*trem*/0.00f },
 
     // Clean: subtle warmth
     { "CLEAN", AmpProcessor::Channel::Clean,
+      /*boost*/false,
       /*gate*/0.05f, /*gain*/0.22f, /*bass*/0.55f, /*mid*/0.58f,
       /*treble*/0.50f, /*presence*/0.42f, /*volume*/0.65f,
-      /*reverb*/0.12f, /*chorus*/0.00f, /*delay*/0.00f },
+      /*reverb*/0.12f, /*chorus*/0.00f, /*delay*/0.00f,
+      /*sag*/0.00f, /*trem*/0.00f },
 
     // Twinkle (emo math rock): TTNG/American Football/Covet
-    // Clean + bright treble + lots of shimmer reverb + slow chorus + quarter-note delay
+    // Clean + bright treble + shimmer reverb + chorus + delay + tremolo
     { "TWINKLE", AmpProcessor::Channel::Clean,
+      /*boost*/false,
       /*gate*/0.02f, /*gain*/0.15f, /*bass*/0.42f, /*mid*/0.60f,
       /*treble*/0.72f, /*presence*/0.58f, /*volume*/0.68f,
-      /*reverb*/0.55f, /*chorus*/0.70f, /*delay*/0.38f },
+      /*reverb*/0.55f, /*chorus*/0.70f, /*delay*/0.38f,
+      /*sag*/0.00f, /*trem*/0.65f },
 };
 
 // ── UmbraLAF ───────────────────────────────────────────────────────────────
@@ -172,6 +184,11 @@ MainComponent::MainComponent()
     styleChannelButton(chLead,   "LEAD");
     chLead.setToggleState(true, juce::dontSendNotification);
 
+    // ── 808 boost toggle ──
+    boostBtn.setClickingTogglesState(true);
+    boostBtn.addListener(this);
+    addAndMakeVisible(boostBtn);
+
     // ── Preset buttons ──
     stylePresetButton(preDeathcore, "DEATHCORE");
     stylePresetButton(preShadow,    "SHADOW");
@@ -187,6 +204,8 @@ MainComponent::MainComponent()
     setupKnob(trebleKnob,   trebleLabel,   "TREBLE");
     setupKnob(presenceKnob, presenceLabel, "PRESENCE");
     setupKnob(volumeKnob,   volumeLabel,   "VOLUME");
+    setupKnob(sagKnob,      sagLabel,      "SAG");
+    setupKnob(tremKnob,     tremLabel,     "TREM");
     setupKnob(reverbKnob,   reverbLabel,   "REVERB");
     setupKnob(chorusKnob,   chorusLabel,   "CHORUS");
     setupKnob(delayKnob,    delayLabel,    "DELAY");
@@ -216,10 +235,8 @@ MainComponent::MainComponent()
 
     addAndMakeVisible(meter);
 
-    // Open with stereo in/out. JUCE routes whatever input device is active.
-    // If no interface is connected the input will be silent; use AUDIO to pick one.
     setAudioChannels(2, 2);
-    setSize(820, 370);
+    setSize(920, 370);
 }
 
 MainComponent::~MainComponent()
@@ -275,8 +292,6 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& info)
     workBuffer.setSize(2, samples, false, false, true);
     workBuffer.clear();
 
-    // Ask the live device how many input channels are actually active.
-    // This works regardless of how setAudioChannels was called.
     int numIn = 0;
     if (auto* dev = deviceManager.getCurrentAudioDevice())
         numIn = dev->getActiveInputChannels().countNumberOfSetBits();
@@ -306,13 +321,15 @@ void MainComponent::buttonClicked(juce::Button* btn)
     if (btn == &chCrunch) { currentChannel = AmpProcessor::Channel::Crunch; updateChannelButtonStates(); syncParams(); return; }
     if (btn == &chLead)   { currentChannel = AmpProcessor::Channel::Lead;   updateChannelButtonStates(); syncParams(); return; }
 
+    if (btn == &boostBtn) { syncParams(); return; }
+
     if (btn == &preDeathcore) { applyPreset(kPresets[0]); return; }
     if (btn == &preShadow)    { applyPreset(kPresets[1]); return; }
     if (btn == &preHybrid)    { applyPreset(kPresets[2]); return; }
     if (btn == &preClean)     { applyPreset(kPresets[3]); return; }
     if (btn == &preTwinkle)   { applyPreset(kPresets[4]); return; }
 
-    if (btn == &irLoadBtn)  { openIRChooser();    return; }
+    if (btn == &irLoadBtn)  { openIRChooser(); return; }
     if (btn == &irClearBtn) {
         processor.clearIR();
         irNameLabel.setText("No IR loaded", juce::dontSendNotification);
@@ -334,6 +351,8 @@ void MainComponent::applyPreset(const Preset& p)
     currentChannel = p.channel;
     updateChannelButtonStates();
 
+    boostBtn.setToggleState(p.boost, juce::dontSendNotification);
+
     gateKnob.setValue(p.gate,         juce::dontSendNotification);
     gainKnob.setValue(p.gain,         juce::dontSendNotification);
     bassKnob.setValue(p.bass,         juce::dontSendNotification);
@@ -344,6 +363,8 @@ void MainComponent::applyPreset(const Preset& p)
     reverbKnob.setValue(p.reverb,     juce::dontSendNotification);
     chorusKnob.setValue(p.chorus,     juce::dontSendNotification);
     delayKnob.setValue(p.delay,       juce::dontSendNotification);
+    sagKnob.setValue(p.sag,           juce::dontSendNotification);
+    tremKnob.setValue(p.trem,         juce::dontSendNotification);
 
     syncParams();
     repaint();
@@ -353,6 +374,7 @@ void MainComponent::syncParams()
 {
     AmpProcessor::Params p;
     p.channel  = currentChannel;
+    p.boost    = boostBtn.getToggleState();
     p.gate     = static_cast<float>(gateKnob.getValue());
     p.gain     = static_cast<float>(gainKnob.getValue());
     p.bass     = static_cast<float>(bassKnob.getValue());
@@ -363,6 +385,8 @@ void MainComponent::syncParams()
     p.reverb   = static_cast<float>(reverbKnob.getValue());
     p.chorus   = static_cast<float>(chorusKnob.getValue());
     p.delay    = static_cast<float>(delayKnob.getValue());
+    p.sag      = static_cast<float>(sagKnob.getValue());
+    p.trem     = static_cast<float>(tremKnob.getValue());
     processor.setParams(p);
 }
 
@@ -370,7 +394,7 @@ void MainComponent::openAudioSettings()
 {
     auto* sel = new juce::AudioDeviceSelectorComponent(
         deviceManager,
-        1, 2,   // min 1 input — auto-activates channel 1 when a device is picked
+        1, 2,
         1, 2,
         false, false, false, false);
     sel->setSize(500, 340);
@@ -423,7 +447,7 @@ void MainComponent::paint(juce::Graphics& g)
         juce::Colour(0xff111111), 0, 48, false));
     g.fillRect(header);
 
-    // Orange accent line under header
+    // Accent line under header
     g.setColour(kAccent);
     g.fillRect(0.0f, 46.0f, (float)W, 2.0f);
 
@@ -452,7 +476,7 @@ void MainComponent::paint(juce::Graphics& g)
     // Channel section label
     g.setColour(juce::Colour(0xff444444));
     g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-    g.drawText("CHANNEL", juce::Rectangle<int>(160, 0, 220, 14), juce::Justification::centred, false);
+    g.drawText("CHANNEL", juce::Rectangle<int>(160, 0, 260, 14), juce::Justification::centred, false);
 }
 
 // ── Resized ────────────────────────────────────────────────────────────────
@@ -464,33 +488,34 @@ void MainComponent::resized()
     // ── Header ──
     audioBtn.setBounds(W - 72, 11, 62, 26);
 
-    // Channel buttons (center of header)
-    const int chW = 72, chH = 26, chY = 11;
-    const int chStart = 170;
+    // Channel buttons + 808 toggle (center-left of header)
+    const int chW = 68, chH = 26, chY = 11;
+    const int chStart = 162;
     chClean .setBounds(chStart,           chY, chW, chH);
     chCrunch.setBounds(chStart + chW + 4, chY, chW, chH);
     chLead  .setBounds(chStart + chW*2+8, chY, chW, chH);
+    boostBtn.setBounds(chStart + chW*3+16, chY, 46, chH);   // "808" button
 
     // ── Preset / IR row (y=48, h=38) ──
     const int rowY = 50, rowH = 30;
-    const int pW = 82;
+    const int pW = 80;
     preDeathcore.setBounds(8,               rowY, pW, rowH);
     preShadow   .setBounds(8 + pW + 3,      rowY, pW, rowH);
     preHybrid   .setBounds(8 + pW*2 + 6,    rowY, pW, rowH);
-    preClean    .setBounds(8 + pW*3 + 9,    rowY, 68, rowH);
-    preTwinkle  .setBounds(8 + pW*3 + 9 + 68 + 3, rowY, 72, rowH);
+    preClean    .setBounds(8 + pW*3 + 9,    rowY, 66, rowH);
+    preTwinkle  .setBounds(8 + pW*3 + 9 + 66 + 3, rowY, 70, rowH);
 
     // IR area (right side of preset row)
     const int irClearW = 26, irLoadW = 72;
     const int irRight  = W - 10;
     irClearBtn .setBounds(irRight - irClearW,               rowY, irClearW, rowH);
     irLoadBtn  .setBounds(irRight - irClearW - irLoadW - 4, rowY, irLoadW,  rowH);
-    const int irLabelX = 8 + pW*3 + 9 + 68 + 3 + 72 + 6;
+    const int irLabelX = 8 + pW*3 + 9 + 66 + 3 + 70 + 6;
     irNameLabel.setBounds(irLabelX, rowY,
                           irRight - irClearW - irLoadW - 4 - irLabelX - 6,
                           rowH);
 
-    // ── Knob area (y=94 downward) ──
+    // ── Knob area (y=94 downward) ── 12 knobs
     const int knobAreaTop = 98;
     const int knobAreaH   = getHeight() - knobAreaTop - 10;
     const int meterW      = 26;
@@ -498,8 +523,7 @@ void MainComponent::resized()
 
     meter.setBounds(meterX, knobAreaTop + 6, meterW, knobAreaH - 12);
 
-    // 10 knob slots (7 amp + 3 FX)
-    const int numKnobs = 10;
+    const int numKnobs = 12;
     const int kAreaW   = meterX - 16;
     const int slotW    = kAreaW / numKnobs;
     const int knobSize = juce::jmin(knobAreaH - 32, slotW - 6);
@@ -520,7 +544,9 @@ void MainComponent::resized()
     place(trebleKnob,   trebleLabel,   4);
     place(presenceKnob, presenceLabel, 5);
     place(volumeKnob,   volumeLabel,   6);
-    place(reverbKnob,   reverbLabel,   7);
-    place(chorusKnob,   chorusLabel,   8);
-    place(delayKnob,    delayLabel,    9);
+    place(sagKnob,      sagLabel,      7);
+    place(tremKnob,     tremLabel,     8);
+    place(reverbKnob,   reverbLabel,   9);
+    place(chorusKnob,   chorusLabel,   10);
+    place(delayKnob,    delayLabel,    11);
 }

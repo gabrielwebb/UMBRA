@@ -38,8 +38,10 @@ struct Preset
 {
     const char*           name;
     AmpProcessor::Channel channel;
+    bool  boost;
     float gate, gain, bass, mid, treble, presence, volume;
     float reverb, chorus, delay;
+    float sag, trem;
 };
 
 // ── MainComponent ──────────────────────────────────────────────────────────
@@ -82,6 +84,7 @@ private:
     juce::TextButton chClean  { "CLEAN"  };
     juce::TextButton chCrunch { "CRUNCH" };
     juce::TextButton chLead   { "LEAD"   };
+    juce::TextButton boostBtn { "808"    };   // pre-boost toggle
 
     AmpProcessor::Channel currentChannel = AmpProcessor::Channel::Lead;
 
@@ -95,9 +98,11 @@ private:
     // ── Knobs ────────────────────────────────────────────────────────────
     juce::Slider gateKnob, gainKnob, bassKnob, midKnob,
                  trebleKnob, presenceKnob, volumeKnob,
+                 sagKnob, tremKnob,
                  reverbKnob, chorusKnob, delayKnob;
     juce::Label  gateLabel, gainLabel, bassLabel, midLabel,
                  trebleLabel, presenceLabel, volumeLabel,
+                 sagLabel, tremLabel,
                  reverbLabel, chorusLabel, delayLabel;
 
     // ── IR ───────────────────────────────────────────────────────────────
