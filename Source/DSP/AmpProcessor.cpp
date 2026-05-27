@@ -17,6 +17,7 @@ void AmpProcessor::prepare(double sr, int blockSize)
     // Gate sidechain & boost filters run at base rate (outside oversampled loop)
     gateSidechain.prepare(spec);
     boostHpf.prepare(spec);
+    boostMid.prepare(spec);
     boostLpf.prepare(spec);
 
     // Nonlinear-chain filters are prepared at 4× rate
@@ -37,6 +38,7 @@ void AmpProcessor::prepare(double sr, int blockSize)
     presenceFilter.prepare(osrSpec);
     cabHpf.prepare(osrSpec);
     cabMidScoop.prepare(osrSpec);
+    cabPresence.prepare(osrSpec);
     cabLpf.prepare(osrSpec);
 
     // Oversampling object (1 channel, 4× = 2^2)
@@ -98,8 +100,11 @@ void AmpProcessor::updateFilters()
     gateSidechain.coefficients = Coeffs::makeBandPass(sampleRate, 800.0, 1.5f);
 
     // ── Pre-boost filters (base rate) ─────────────────────────────────────
-    boostHpf.coefficients = Coeffs::makeHighPass(sampleRate, 720.0,  0.707);
-    boostLpf.coefficients = Coeffs::makeLowPass( sampleRate, 3500.0, 0.707);
+    // Tube Screamer character: tight HPF + midrange hump + soft rolloff
+    boostHpf.coefficients = Coeffs::makeHighPass( sampleRate, 720.0, 0.707);
+    boostMid.coefficients = Coeffs::makePeakFilter(sampleRate, 900.0, 2.0f,
+        juce::Decibels::decibelsToGain(6.0f));
+    boostLpf.coefficients = Coeffs::makeLowPass(  sampleRate, 3500.0, 0.707);
     boostDrive = 6.0f;
 
     // ── Pre-HPF (oversampled rate) ────────────────────────────────────────
@@ -137,11 +142,17 @@ void AmpProcessor::updateFilters()
     presenceFilter.coefficients = Coeffs::makePeakFilter(osr, presFreq, 1.5f,
         juce::Decibels::decibelsToGain((params.presence - 0.5f) * 16.0f));
 
-    // ── Cab sim (oversampled rate) ────────────────────────────────────────
-    cabHpf.coefficients      = Coeffs::makeHighPass( osr, 80.0,  0.707);
-    cabMidScoop.coefficients = Coeffs::makePeakFilter(osr, 400.0, 1.0f,
-        juce::Decibels::decibelsToGain(-7.0f));
-    cabLpf.coefficients      = Coeffs::makeLowPass(  osr, 5500.0, 0.85);
+    // ── Cab sim (oversampled rate) — Celestion V30 character ─────────────
+    // HPF: speaker rolloff below 100 Hz
+    cabHpf.coefficients      = Coeffs::makeHighPass( osr, 100.0,  0.707);
+    // Cabinet dip: ~800 Hz box resonance notch (gives presence without honkiness)
+    cabMidScoop.coefficients = Coeffs::makePeakFilter(osr, 800.0, 1.2f,
+        juce::Decibels::decibelsToGain(-5.0f));
+    // V30 presence peak: 2.5–3 kHz cone breakup / voice coil
+    cabPresence.coefficients = Coeffs::makePeakFilter(osr, 2800.0, 1.8f,
+        juce::Decibels::decibelsToGain(4.5f));
+    // Air rolloff: V30 rolls off sharply above 5 kHz
+    cabLpf.coefficients      = Coeffs::makeLowPass(  osr, 5000.0, 0.75);
 
     // ── Reverb ────────────────────────────────────────────────────────────
     {
@@ -182,6 +193,7 @@ void AmpProcessor::resetFilterStates()
 {
     gateSidechain.reset();
     boostHpf.reset();
+    boostMid.reset();
     boostLpf.reset();
     preHpf.reset();
     lpf1.reset(); lpf2.reset(); lpf3.reset(); lpf4.reset();
@@ -189,7 +201,7 @@ void AmpProcessor::resetFilterStates()
     leadChunkPeak.reset();
     bassFilter.reset(); midFilter.reset(); trebleFilter.reset();
     presenceFilter.reset();
-    cabHpf.reset(); cabMidScoop.reset(); cabLpf.reset();
+    cabHpf.reset(); cabMidScoop.reset(); cabPresence.reset(); cabLpf.reset();
 
     gateEnvelope = 0.0f;
     sagEnvelope  = 0.0f;
@@ -237,17 +249,25 @@ float AmpProcessor::applyGateSample(float x) noexcept
 
 float AmpProcessor::processCleanSample(float x) noexcept
 {
-    return waveshape(x * cleanDrive) * cleanNorm * 0.4f;
+    // Stage 1 — asymmetric warmth
+    x = waveshape(x * cleanDrive) * cleanNorm * 0.4f;
+    x = dc1.processSample(x);
+    x = lpf1.processSample(x);
+    // Stage 2 — very light second harmonic bloom (class A character)
+    const float stage2Drive = 1.0f + params.gain * 1.2f;
+    x = waveshape(x * stage2Drive) * 0.9f;
+    x = dc2.processSample(x);
+    return x;
 }
 
 float AmpProcessor::processCrunchSample(float x) noexcept
 {
-    // Stage 1
+    // Stage 1 — asymmetric even-harmonic warmth (vintage character)
     x = waveshape(x * crunchDrive1);
     x = dc1.processSample(x);
     x = lpf1.processSample(x);
 
-    // SAG: measure level after stage 1, scale stage 2 drive
+    // SAG: measure level after stage 1, scale remaining stages
     if (params.sag > 0.001f)
     {
         const float lvl = std::abs(x);
@@ -258,10 +278,15 @@ float AmpProcessor::processCrunchSample(float x) noexcept
     }
     const float sagScale = 1.0f - params.sag * sagEnvelope * 0.45f;
 
-    // Stage 2
-    x = waveshape(x * crunchDrive2 * sagScale);
+    // Stage 2 — soft tanh (adds odd harmonics, thickens the crunch)
+    x = std::tanh(x * crunchDrive2 * sagScale);
     x = dc2.processSample(x);
     x = lpf2.processSample(x);
+
+    // Stage 3 — light triode clip for compression and warmth
+    x = triodeClip(x, (2.0f + params.gain * 5.0f) * sagScale);
+    x = dc3.processSample(x);
+    x = lpf3.processSample(x);
     return x;
 }
 
@@ -316,10 +341,20 @@ void AmpProcessor::process(juce::AudioBuffer<float>& buffer)
         for (int i = 0; i < numSamples; ++i)
         {
             float x = boostHpf.processSample(ch0[i]);
-            x = std::tanh(x * boostDrive);
+            x = boostMid.processSample(x);         // TS midrange hump first
+            x = std::tanh(x * boostDrive);         // soft saturation
             x = boostLpf.processSample(x);
-            ch0[i] = x * 0.7f;
+            ch0[i] = x * 0.65f;                    // normalize
         }
+    }
+
+    // ── Gate at base rate (before upsampling) ──
+    // Running at base rate gives correct timing (1 ms attack / 60 ms release)
+    // and the sidechain bandpass filter operates at the right frequency.
+    if (gateThresh > 0.0f)
+    {
+        for (int i = 0; i < numSamples; ++i)
+            ch0[i] = applyGateSample(ch0[i]);
     }
 
     // ── Gate sidechain detection happens at base rate (in applyGateSample) ──
@@ -339,7 +374,6 @@ void AmpProcessor::process(juce::AudioBuffer<float>& buffer)
         for (int i = 0; i < upSamples; ++i)
         {
             float x = preHpf.processSample(up[i]);
-            x = applyGateSample(x);
 
             switch (params.channel)
             {
@@ -357,10 +391,11 @@ void AmpProcessor::process(juce::AudioBuffer<float>& buffer)
             {
                 x = cabHpf.processSample(x);
                 x = cabMidScoop.processSample(x);
+                x = cabPresence.processSample(x);
                 x = cabLpf.processSample(x);
             }
 
-            x = juce::jlimit(-1.0f, 1.0f, x);
+            x = softLimit(x);
             up[i] = x;
         }
 

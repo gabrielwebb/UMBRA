@@ -59,6 +59,15 @@ private:
         return (x >= 0.0f) ? 1.0f - std::exp(-x)
                            : -1.0f + std::exp(x * 1.3f);
     }
+    // Soft brick-wall limiter: unity gain for |x| ≤ 0.9, smooth knee to ~1.0
+    static float softLimit(float x) noexcept
+    {
+        const float ax = std::abs(x);
+        if (ax <= 0.9f) return x;
+        const float excess = ax - 0.9f;
+        const float sat = 0.9f + 0.1f * (excess / (1.0f + excess * 10.0f));
+        return std::copysign(sat, x);
+    }
 
     using Filt = juce::dsp::IIR::Filter<float>;
 
@@ -68,13 +77,14 @@ private:
     Filt leadChunkPeak;
     Filt bassFilter, midFilter, trebleFilter;
     Filt presenceFilter;
-    Filt cabHpf, cabMidScoop, cabLpf;
+    Filt cabHpf, cabMidScoop, cabPresence, cabLpf;
 
     // ── Gate sidechain ────────────────────────────────────────────────────
     Filt gateSidechain;   // bandpass ~800 Hz — avoids false triggers from hum
 
     // ── Pre-boost (808 / Tube Screamer) ───────────────────────────────────
     Filt  boostHpf;       // HPF 720 Hz — cut muddy lows
+    Filt  boostMid;       // Peak ~900 Hz +6 dB — TS midrange hump
     Filt  boostLpf;       // LPF 3500 Hz — smooth highs
     float boostDrive = 6.0f;
 
