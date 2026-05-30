@@ -1,281 +1,298 @@
 #include "MainComponent.h"
 
 // ── Presets ────────────────────────────────────────────────────────────────
-// Preset fields: name, channel, boost, gate, gain, bass, mid, treble, presence, volume,
-//                reverb, chorus, delay, sag, trem
+// Fields: name, channel, boost, gate, gain, bass, mid, treble, presence, volume,
+//         reverb, chorus, delay, sag, trem, transpose  [comp=0, delayTimeMs=350]
 static const Preset kPresets[] =
 {
-    // Deathcore: 6505+ — max gain, 808 boost, scooped mids, tight gate
-    { "DEATHCORE", AmpProcessor::Channel::Lead,
-      /*boost*/true,
-      /*gate*/0.78f, /*gain*/0.90f, /*bass*/0.60f, /*mid*/0.08f,
-      /*treble*/0.72f, /*presence*/0.85f, /*volume*/0.55f,
-      /*reverb*/0.00f, /*chorus*/0.00f, /*delay*/0.00f,
-      /*sag*/0.00f, /*trem*/0.00f },
-
-    // Shadow (Deftones/shoegaze): warm crunch, rectifier sag, loose gate
-    { "SHADOW", AmpProcessor::Channel::Crunch,
+    // Deftones — White Pony: Mesa Dual Rectifier, warm sag
+    { "DEFTONES", AmpProcessor::Channel::Crunch,
       /*boost*/false,
-      /*gate*/0.20f, /*gain*/0.58f, /*bass*/0.62f, /*mid*/0.55f,
-      /*treble*/0.38f, /*presence*/0.38f, /*volume*/0.55f,
-      /*reverb*/0.28f, /*chorus*/0.18f, /*delay*/0.00f,
-      /*sag*/0.45f, /*trem*/0.00f },
+      0.18f, 0.62f, 0.65f, 0.45f, 0.40f, 0.30f, 0.58f,
+      0.15f, 0.10f, 0.00f,
+      0.60f, 0.00f, 0 },
 
-    // Hybrid (Linkin Park): punchy crunch, mid-forward, light sag
+    // Knocked Loose — gnarly 5150 + 808 deathcore
+    { "KNOCKED", AmpProcessor::Channel::Lead,
+      /*boost*/true,
+      0.72f, 0.88f, 0.55f, 0.12f, 0.78f, 0.85f, 0.55f,
+      0.00f, 0.00f, 0.00f,
+      0.05f, 0.00f, 0 },
+
+    // Bilmuri — modern metalcore punch
+    { "BILMURI", AmpProcessor::Channel::Lead,
+      /*boost*/false,
+      0.42f, 0.74f, 0.54f, 0.40f, 0.65f, 0.65f, 0.55f,
+      0.06f, 0.00f, 0.00f,
+      0.12f, 0.00f, 0 },
+
+    // Linkin Park — Hybrid Theory: mid-forward Mesa crunch
     { "HYBRID", AmpProcessor::Channel::Crunch,
       /*boost*/false,
-      /*gate*/0.40f, /*gain*/0.72f, /*bass*/0.50f, /*mid*/0.42f,
-      /*treble*/0.62f, /*presence*/0.62f, /*volume*/0.55f,
-      /*reverb*/0.10f, /*chorus*/0.00f, /*delay*/0.00f,
-      /*sag*/0.22f, /*trem*/0.00f },
+      0.38f, 0.72f, 0.50f, 0.52f, 0.60f, 0.60f, 0.55f,
+      0.10f, 0.00f, 0.00f,
+      0.22f, 0.00f, 0 },
 
-    // Clean: subtle warmth
-    { "CLEAN", AmpProcessor::Channel::Clean,
+    // Hot Mulligan — chimey Fender clean with shimmer
+    { "HOT MUL", AmpProcessor::Channel::Clean,
       /*boost*/false,
-      /*gate*/0.05f, /*gain*/0.22f, /*bass*/0.55f, /*mid*/0.58f,
-      /*treble*/0.50f, /*presence*/0.42f, /*volume*/0.65f,
-      /*reverb*/0.12f, /*chorus*/0.00f, /*delay*/0.00f,
-      /*sag*/0.00f, /*trem*/0.00f },
-
-    // Twinkle (emo math rock): TTNG/American Football/Covet
-    // Clean + bright treble + shimmer reverb + chorus + delay + tremolo
-    { "TWINKLE", AmpProcessor::Channel::Clean,
-      /*boost*/false,
-      /*gate*/0.02f, /*gain*/0.15f, /*bass*/0.42f, /*mid*/0.60f,
-      /*treble*/0.72f, /*presence*/0.58f, /*volume*/0.68f,
-      /*reverb*/0.55f, /*chorus*/0.70f, /*delay*/0.38f,
-      /*sag*/0.00f, /*trem*/0.65f },
+      0.03f, 0.26f, 0.50f, 0.58f, 0.68f, 0.52f, 0.62f,
+      0.22f, 0.15f, 0.20f,
+      0.00f, 0.00f, 0 },
 };
 
-// ── UmbraLAF ───────────────────────────────────────────────────────────────
+// ── Local colour aliases (matching SharedComponents.h namespace) ───────────
+static const juce::Colour kAccent    = UmbraColors::kAccent;
+static const juce::Colour kAccentHi  = UmbraColors::kAccentHi;
+static const juce::Colour kAccentGlow= UmbraColors::kAccentGlow;
+static const juce::Colour kPanel     = UmbraColors::kPanel;
+static const juce::Colour kDark      = UmbraColors::kDark;
 
-static const juce::Colour kAccent   { 0xffcc2200 };
-static const juce::Colour kAccentHi { 0xffff5522 };
-static const juce::Colour kAccentGlow { 0x55cc2200 };
-static const juce::Colour kPanel    { 0xff131110 };
-static const juce::Colour kPanelHi  { 0xff1c1a18 };
-static const juce::Colour kDark     { 0xff070604 };
-
-void UmbraLAF::drawRotarySlider(juce::Graphics& g,
-                                 int x, int y, int w, int h,
-                                 float pos, float startAngle, float endAngle,
-                                 juce::Slider&)
+// ── GateLED ────────────────────────────────────────────────────────────────
+// (UmbraLAF + LevelMeter implementations now live in UI/SharedComponents.cpp)
+// Shows gate open (green) / closed (red) state and comp gain reduction bar.
+// Positioned inline by MainComponent::resized() between meter and knobs.
+class GateCompWidget : public juce::Component, private juce::Timer
 {
-    const auto bounds = juce::Rectangle<float>(x, y, w, h).reduced(4.0f);
-    const auto c      = bounds.getCentre();
-    const float r     = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.5f;
-    const float angle = startAngle + (endAngle - startAngle) * pos;
+public:
+    explicit GateCompWidget(AmpProcessor& p) : proc(p) { startTimerHz(30); }
 
-    // ── 1. Drop shadow ──
-    g.setColour(juce::Colour(0xaa000000));
-    g.fillEllipse(bounds.translated(0.0f, 1.5f));
-
-    // ── 2. Outer bezel — gunmetal ring ──
+    void paint(juce::Graphics& g) override
     {
-        juce::ColourGradient cg(juce::Colour(0xff3a3733), c.x - r * 0.5f, c.y - r * 0.5f,
-                                juce::Colour(0xff0e0d0c), c.x + r * 0.6f, c.y + r * 0.7f, true);
-        g.setGradientFill(cg);
-        g.fillEllipse(bounds);
-    }
-    // Bezel highlight rim (top-left edge only)
-    g.setColour(juce::Colour(0x28ffffff));
-    g.drawEllipse(bounds.reduced(0.5f), 1.0f);
+        const auto b = getLocalBounds().toFloat().reduced(1.f);
 
-    // ── 3. Track groove ──
-    const auto trackB = bounds.reduced(r * 0.22f);
-    juce::Path groove;
-    groove.addArc(trackB.getX(), trackB.getY(), trackB.getWidth(), trackB.getHeight(),
-                  startAngle, endAngle, true);
-    g.setColour(juce::Colour(0xff060504));
-    g.strokePath(groove, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved,
-                                               juce::PathStrokeType::rounded));
-    g.setColour(juce::Colour(0xff1e1c1a));
-    g.strokePath(groove, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved,
-                                               juce::PathStrokeType::rounded));
+        g.setColour(juce::Colour(0xff0a0908));
+        g.fillRoundedRectangle(b, 3.f);
 
-    // ── 4. Value arc — outer glow then bright fill ──
-    if (pos > 0.001f)
-    {
-        juce::Path varc;
-        varc.addArc(trackB.getX(), trackB.getY(), trackB.getWidth(), trackB.getHeight(),
-                    startAngle, angle, true);
-        // Glow halo
-        g.setColour(kAccentGlow);
-        g.strokePath(varc, juce::PathStrokeType(5.5f, juce::PathStrokeType::curved,
-                                                 juce::PathStrokeType::rounded));
-        // Bright arc
-        g.setColour(kAccentHi);
-        g.strokePath(varc, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
-                                                 juce::PathStrokeType::rounded));
-    }
+        // Gate LED (top half)
+        const float ledR  = 4.f;
+        const float ledX  = b.getCentreX();
+        const float ledY  = b.getY() + 10.f;
+        const juce::Colour gateOn  = juce::Colour(0xff11dd44);
+        const juce::Colour gateOff = juce::Colour(0xffcc1100);
+        const float go = gateOpen;
+        const juce::Colour ledCol = go > 0.5f
+            ? gateOn.interpolatedWith(gateOff, 0.f)
+            : gateOff.interpolatedWith(gateOn, go * 2.f);
 
-    // ── 5. Knob body — inset metallic cap ──
-    const auto bodyB = bounds.reduced(r * 0.30f);
-    {
-        juce::ColourGradient cg(juce::Colour(0xff3e3b37), c.x - r * 0.2f, c.y - r * 0.3f,
-                                juce::Colour(0xff141210), c.x + r * 0.3f, c.y + r * 0.4f, true);
-        g.setGradientFill(cg);
-        g.fillEllipse(bodyB);
-    }
+        g.setColour(ledCol.withAlpha(0.25f));
+        g.fillEllipse(ledX - ledR * 2, ledY - ledR * 2, ledR * 4, ledR * 4);
+        g.setColour(ledCol);
+        g.fillEllipse(ledX - ledR, ledY - ledR, ledR * 2, ledR * 2);
 
-    // ── 6. Specular highlight (top-left lens reflection) ──
-    {
-        juce::ColourGradient cg(juce::Colour(0x38ffffff), c.x - r * 0.18f, c.y - r * 0.22f,
-                                juce::Colour(0x00ffffff), c.x + r * 0.05f, c.y + r * 0.05f, true);
-        g.setGradientFill(cg);
-        g.fillEllipse(bodyB);
-    }
+        g.setFont(juce::Font(juce::FontOptions().withHeight(7.f)));
+        g.setColour(juce::Colour(0xff3a3632));
+        g.drawText("G", static_cast<int>(ledX - 5), static_cast<int>(ledY + ledR + 1), 10, 10, juce::Justification::centred, false);
 
-    // ── 7. Pointer dot ──
-    const float bodyR  = juce::jmin(bodyB.getWidth(), bodyB.getHeight()) * 0.5f;
-    const float dotR   = juce::jmax(2.0f, bodyR * 0.14f);
-    const float dotDst = bodyR - dotR * 1.5f;
-    const auto  dotPos = c.getPointOnCircumference(dotDst, angle);
-    // Shadow under dot
-    g.setColour(juce::Colour(0x88000000));
-    g.fillEllipse(dotPos.x - dotR + 0.6f, dotPos.y - dotR + 0.7f, dotR * 2.0f, dotR * 2.0f);
-    // Dot — bright white when non-zero, dimmed at minimum
-    g.setColour(pos > 0.01f ? juce::Colour(0xfff0eee8) : juce::Colour(0xff555250));
-    g.fillEllipse(dotPos.x - dotR, dotPos.y - dotR, dotR * 2.0f, dotR * 2.0f);
-}
+        // Comp GR bar (bottom half)
+        const float barX = b.getX() + 2.f;
+        const float barW = b.getWidth() - 4.f;
+        const float barTop  = b.getY() + b.getHeight() * 0.55f;
+        const float barBotY = b.getBottom() - 6.f;
+        const float barH    = barBotY - barTop;
 
-void UmbraLAF::drawButtonBackground(juce::Graphics& g, juce::Button& btn,
-                                     const juce::Colour&, bool highlighted, bool down)
-{
-    auto b = btn.getLocalBounds().toFloat().reduced(0.5f);
-    const bool tog  = btn.getToggleState();
-    const auto text = btn.getButtonText();
+        g.setColour(juce::Colour(0xff1a1816));
+        g.fillRoundedRectangle(barX, barTop, barW, barH, 2.f);
 
-    // Background fill
-    juce::Colour bg = tog    ? kPanel.brighter(0.08f)
-                    : down   ? juce::Colour(0xff252320)
-                    : highlighted ? juce::Colour(0xff1e1c1a)
-                                  : juce::Colour(0xff161412);
-    g.setColour(bg);
-    g.fillRoundedRectangle(b, 3.0f);
-
-    // Border — accent colour when active, subtle otherwise
-    juce::Colour border = tog ? kAccent.withAlpha(0.85f) : juce::Colour(0xff2e2c2a);
-    g.setColour(border);
-    g.drawRoundedRectangle(b, 3.0f, 1.0f);
-
-    // ── Channel LED indicator dot (left side of button) ──
-    const bool isChannel = (text == "CLEAN" || text == "CRUNCH" || text == "LEAD");
-    if (isChannel)
-    {
-        const juce::Colour ledOn  = (text == "CLEAN")  ? juce::Colour(0xff33bbff)
-                                  : (text == "CRUNCH") ? juce::Colour(0xffff8833)
-                                                       : juce::Colour(0xffff2200);
-        const juce::Colour ledOff = ledOn.withAlpha(0.18f).withBrightness(0.2f);
-        const float dotR = 3.0f;
-        const float dotX = b.getX() + 8.0f;
-        const float dotY = b.getCentreY();
-        if (tog)
+        const float gr = juce::jlimit(0.f, 1.f, compGR);
+        if (gr > 0.01f)
         {
-            // Glow
-            g.setColour(ledOn.withAlpha(0.35f));
-            g.fillEllipse(dotX - dotR * 2.0f, dotY - dotR * 2.0f, dotR * 4.0f, dotR * 4.0f);
-            g.setColour(ledOn);
-            g.fillEllipse(dotX - dotR, dotY - dotR, dotR * 2.0f, dotR * 2.0f);
-            // Specular
-            g.setColour(juce::Colours::white.withAlpha(0.55f));
-            g.fillEllipse(dotX - dotR * 0.45f, dotY - dotR * 0.75f, dotR * 0.8f, dotR * 0.6f);
+            const juce::Colour grCol = gr < 0.4f ? juce::Colour(0xff11dd44)
+                                     : gr < 0.7f ? juce::Colour(0xffddcc00)
+                                                 : juce::Colour(0xffee2200);
+            g.setColour(grCol);
+            g.fillRoundedRectangle(barX, barTop + barH * (1.f - gr), barW, barH * gr, 2.f);
         }
-        else
-        {
-            g.setColour(ledOff);
-            g.fillEllipse(dotX - dotR, dotY - dotR, dotR * 2.0f, dotR * 2.0f);
-        }
+
+        g.setFont(juce::Font(juce::FontOptions().withHeight(7.f)));
+        g.setColour(juce::Colour(0xff3a3632));
+        g.drawText("GR", static_cast<int>(barX), static_cast<int>(barBotY), static_cast<int>(barW), 8, juce::Justification::centred, false);
     }
-}
 
-void UmbraLAF::drawButtonText(juce::Graphics& g, juce::TextButton& btn, bool, bool)
-{
-    const bool tog  = btn.getToggleState();
-    const auto text = btn.getButtonText();
-    const bool isChannel = (text == "CLEAN" || text == "CRUNCH" || text == "LEAD");
-
-    // Shift text right on channel buttons to leave room for the LED
-    const auto textBounds = isChannel
-        ? btn.getLocalBounds().withTrimmedLeft(8)
-        : btn.getLocalBounds();
-
-    juce::Colour col = tog ? juce::Colours::white : juce::Colour(0xff888480);
-    g.setColour(col);
-    g.setFont(juce::Font(juce::FontOptions().withHeight(10.5f).withStyle("Bold")));
-    g.drawText(text, textBounds, juce::Justification::centred, false);
-}
-
-void UmbraLAF::drawLabel(juce::Graphics& g, juce::Label& lbl)
-{
-    g.setColour(juce::Colour(0xff6a6560));
-    g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-    g.drawText(lbl.getText(), lbl.getLocalBounds(), juce::Justification::centred, false);
-}
-
-// ── LevelMeter ─────────────────────────────────────────────────────────────
-
-LevelMeter::LevelMeter(AmpProcessor& p) : proc(p) { startTimerHz(30); }
-
-void LevelMeter::paint(juce::Graphics& g)
-{
-    auto b = getLocalBounds().toFloat().reduced(1.0f);
-
-    // Well/background
-    g.setColour(kDark);
-    g.fillRoundedRectangle(b, 4.0f);
-    g.setColour(juce::Colour(0xff1e1c1a));
-    g.drawRoundedRectangle(b, 4.0f, 0.5f);
-
-    // "OUT" label
-    g.setColour(juce::Colour(0xff3a3632));
-    g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
-    g.drawText("OUT", getLocalBounds(), juce::Justification::centredTop, false);
-
-    // Segmented LEDs — 13 segments (bottom to top)
-    // Segments 0-8: green, 9-10: yellow, 11-12: red
-    constexpr int kSegs = 13;
-    const float  padT   = 14.0f;   // space for "OUT" label
-    const float  padB   = 3.0f;
-    const float  gap    = 1.5f;
-    const float  totalH = b.getHeight() - padT - padB;
-    const float  segH   = (totalH - gap * (kSegs - 1)) / kSegs;
-    const float  segW   = b.getWidth() - 6.0f;
-    const float  segX   = b.getX() + 3.0f;
-
-    // Level: scale ×2 so signal at 0.5 fills meter to yellow
-    const float level = juce::jlimit(0.0f, 1.0f, display * 2.0f);
-    const int   lit   = static_cast<int>(level * kSegs + 0.4f);
-
-    for (int i = 0; i < kSegs; ++i)
+    void timerCallback() override
     {
-        const float segY = b.getBottom() - padB - (i + 1) * segH - i * gap;
-        const bool  on   = (i < lit);
+        gateOpen = gateOpen * 0.7f + proc.getGateOpen() * 0.3f;
+        compGR   = compGR   * 0.7f + proc.getCompGR()   * 0.3f;
+        repaint();
+    }
 
-        juce::Colour col;
-        if (i >= kSegs - 2)        // top 2 = red
-            col = on ? juce::Colour(0xffee2200) : juce::Colour(0xff1e0500);
-        else if (i >= kSegs - 4)   // next 2 = yellow
-            col = on ? juce::Colour(0xffddcc00) : juce::Colour(0xff1a1500);
-        else                       // bottom 9 = green
-            col = on ? juce::Colour(0xff11dd44) : juce::Colour(0xff052010);
+private:
+    AmpProcessor& proc;
+    float gateOpen = 1.f;
+    float compGR   = 0.f;
+};
 
-        g.setColour(col);
-        g.fillRoundedRectangle(segX, segY, segW, segH, 1.0f);
+// ── TunerComponent ─────────────────────────────────────────────────────────
 
-        // Tiny specular sheen on lit segments
-        if (on)
-        {
-            g.setColour(juce::Colour(0x18ffffff));
-            g.fillRoundedRectangle(segX, segY, segW, segH * 0.4f, 1.0f);
-        }
+TunerComponent::TunerComponent(AmpProcessor& p) : proc(p)
+{
+    yinWork.resize(AmpProcessor::kTunerBufLen / 2, 0.0f);
+    setInterceptsMouseClicks(false, false);
+}
+
+void TunerComponent::visibilityChanged()
+{
+    if (isVisible())
+        startTimerHz(20);
+    else
+    {
+        stopTimer();
+        currentHz    = 0.0f;
+        currentCents = 0.0f;
+        noteName     = "--";
     }
 }
 
-void LevelMeter::timerCallback()
+void TunerComponent::timerCallback()
 {
-    display = display * 0.75f + proc.getOutputLevel() * 0.25f;
+    proc.getTunerSnapshot(snapshot.data(), AmpProcessor::kTunerBufLen);
+    currentHz = runYin(snapshot.data(), AmpProcessor::kTunerBufLen, yinWork,
+                       proc.getSampleRate());
+    if (currentHz > 30.0f)
+    {
+        auto [name, cents] = frequencyToNote(currentHz);
+        noteName     = name;
+        currentCents = cents;
+    }
+    else
+    {
+        noteName     = "--";
+        currentCents = 0.0f;
+    }
     repaint();
+}
+
+void TunerComponent::paint(juce::Graphics& g)
+{
+    const auto b = getLocalBounds();
+
+    // Semi-opaque dark panel
+    g.setColour(juce::Colour(0xf40d0b09));
+    g.fillRoundedRectangle(b.toFloat(), 6.0f);
+    g.setColour(juce::Colour(0xff2a2724));
+    g.drawRoundedRectangle(b.toFloat().reduced(0.5f), 6.0f, 1.0f);
+
+    // Header
+    g.setColour(juce::Colour(0xff484240));
+    g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+    g.drawText("CHROMATIC TUNER", b.withHeight(22), juce::Justification::centred, false);
+
+    // Note name
+    g.setFont(juce::Font(juce::FontOptions().withHeight(76.0f).withStyle("Bold")));
+    g.setColour(currentHz > 30.0f ? juce::Colours::white : juce::Colour(0xff2e2c2a));
+    g.drawText(noteName,
+               b.withTrimmedTop(18).withTrimmedBottom(52),
+               juce::Justification::centred, false);
+
+    if (currentHz > 30.0f)
+    {
+        // Hz readout
+        g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+        g.setColour(juce::Colour(0xff555250));
+        g.drawText(juce::String(currentHz, 1) + " Hz",
+                   b.withTrimmedTop(b.getHeight() - 50).withTrimmedBottom(26),
+                   juce::Justification::centred, false);
+
+        // Cents bar
+        const float centsNorm = juce::jlimit(-1.0f, 1.0f, currentCents / 50.0f);
+        const auto barArea = b.withTrimmedTop(b.getHeight() - 28)
+                              .withTrimmedBottom(6)
+                              .reduced(30, 0);
+        const float midX    = static_cast<float>(barArea.getCentreX());
+        const float barYf   = static_cast<float>(barArea.getY());
+        const float barHf   = static_cast<float>(barArea.getHeight());
+        const float barWf   = static_cast<float>(barArea.getWidth());
+
+        // Background track
+        g.setColour(juce::Colour(0xff1e1c1a));
+        g.fillRoundedRectangle(static_cast<float>(barArea.getX()), barYf,
+                               barWf, barHf, 4.0f);
+
+        // Centre tick
+        g.setColour(juce::Colour(0xff3a3632));
+        g.fillRect(midX - 0.5f, barYf, 1.0f, barHf);
+
+        // Needle colour: green ±5¢, yellow ±15¢, red beyond
+        const juce::Colour needleCol =
+            std::abs(currentCents) < 5.0f  ? juce::Colour(0xff11dd44) :
+            std::abs(currentCents) < 15.0f ? juce::Colour(0xffddcc00) :
+                                             juce::Colour(0xffee2200);
+
+        const float needleX = midX + centsNorm * barWf * 0.5f;
+        const float fillX   = std::min(midX, needleX);
+        const float fillW   = std::abs(needleX - midX);
+        if (fillW > 1.0f)
+        {
+            g.setColour(needleCol.withAlpha(0.3f));
+            g.fillRoundedRectangle(fillX, barYf, fillW, barHf, 3.0f);
+        }
+        g.setColour(needleCol);
+        g.fillRoundedRectangle(needleX - 3.0f, barYf - 2.0f, 6.0f, barHf + 4.0f, 3.0f);
+
+        // ±50¢ labels
+        g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+        g.setColour(juce::Colour(0xff3a3632));
+        g.drawText("-50", barArea.withTrimmedRight(barArea.getWidth() - 28).translated(-30, 0),
+                   juce::Justification::centredRight, false);
+        g.drawText("+50", barArea.withTrimmedLeft(barArea.getWidth() - 28).translated(30, 0),
+                   juce::Justification::centredLeft, false);
+    }
+}
+
+// YIN pitch detection — autocorrelation-based, guitar range 55-1400 Hz
+float TunerComponent::runYin(const float* buf, int bufLen,
+                              std::vector<float>& d, double sr)
+{
+    const int W      = bufLen / 2;
+    const int tauMin = std::max(2, static_cast<int>(sr / 1400.0));
+    const int tauMax = std::min(W - 1, static_cast<int>(sr / 55.0));
+
+    std::fill(d.begin(), d.end(), 0.0f);
+    d[0] = 1.0f;
+
+    // Cumulative mean normalised difference function (steps 1-3 of YIN paper)
+    float cumSum = 0.0f;
+    for (int tau = 1; tau <= tauMax; ++tau)
+    {
+        float sum = 0.0f;
+        for (int j = 0; j < W; ++j)
+        {
+            const float diff = buf[j] - buf[j + tau];
+            sum += diff * diff;
+        }
+        cumSum += sum;
+        d[tau] = (cumSum > 0.0f) ? (sum * static_cast<float>(tau) / cumSum) : 1.0f;
+    }
+
+    // Step 4: absolute threshold search with parabolic interpolation
+    constexpr float kThresh = 0.15f;
+    for (int tau = tauMin; tau <= tauMax; ++tau)
+    {
+        if (d[tau] < kThresh)
+        {
+            float frac = 0.0f;
+            if (tau > 1 && tau < tauMax)
+            {
+                const float a = d[tau - 1], bv = d[tau], c = d[tau + 1];
+                const float denom = 2.0f * bv - a - c;
+                if (denom > 1e-6f)
+                    frac = juce::jlimit(-0.5f, 0.5f, 0.5f * (a - c) / denom);
+            }
+            return static_cast<float>(sr) / (static_cast<float>(tau) + frac);
+        }
+    }
+    return 0.0f;
+}
+
+std::pair<juce::String, float> TunerComponent::frequencyToNote(float hz)
+{
+    if (hz < 20.0f) return {"--", 0.0f};
+    const float noteNum = 12.0f * std::log2(hz / 440.0f) + 69.0f;
+    const int   midi    = static_cast<int>(std::round(noteNum));
+    const float cents   = (noteNum - static_cast<float>(midi)) * 100.0f;
+    static const char* kNames[] = {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+    const int oct = midi / 12 - 1;
+    return { juce::String(kNames[((midi % 12) + 12) % 12]) + juce::String(oct), cents };
 }
 
 // ── MainComponent ──────────────────────────────────────────────────────────
@@ -284,40 +301,58 @@ MainComponent::MainComponent()
 {
     setLookAndFeel(&laf);
 
-    // ── Channel buttons (radio-style) ──
+    // ── Channel buttons ──
     styleChannelButton(chClean,  "CLEAN");
     styleChannelButton(chCrunch, "CRUNCH");
     styleChannelButton(chLead,   "LEAD");
     chLead.setToggleState(true, juce::dontSendNotification);
 
-    // ── 808 boost toggle ──
     boostBtn.setClickingTogglesState(true);
     boostBtn.addListener(this);
     addAndMakeVisible(boostBtn);
 
     // ── Preset buttons ──
-    stylePresetButton(preDeathcore, "DEATHCORE");
-    stylePresetButton(preShadow,    "SHADOW");
-    stylePresetButton(preHybrid,    "HYBRID");
-    stylePresetButton(preClean,     "CLEAN");
-    stylePresetButton(preTwinkle,   "TWINKLE");
+    stylePresetButton(preDeftones, "DEFTONES");
+    stylePresetButton(preKnocked,  "KNOCKED");
+    stylePresetButton(preBilmuri,  "BILMURI");
+    stylePresetButton(preHybrid,   "HYBRID");
+    stylePresetButton(preHotMul,   "HOT MUL");
 
-    // ── Knobs ──
-    setupKnob(gateKnob,     gateLabel,     "GATE");
-    setupKnob(gainKnob,     gainLabel,     "GAIN");
-    setupKnob(bassKnob,     bassLabel,     "BASS");
-    setupKnob(midKnob,      midLabel,      "MID");
-    setupKnob(trebleKnob,   trebleLabel,   "TREBLE");
-    setupKnob(presenceKnob, presenceLabel, "PRESENCE");
-    setupKnob(volumeKnob,   volumeLabel,   "VOLUME");
-    setupKnob(sagKnob,      sagLabel,      "SAG");
-    setupKnob(tremKnob,     tremLabel,     "TREM");
-    setupKnob(reverbKnob,   reverbLabel,   "REVERB");
-    setupKnob(chorusKnob,   chorusLabel,   "CHORUS");
-    setupKnob(delayKnob,    delayLabel,    "DELAY");
+    // ── INPUT section knobs ──
+    setupKnob(compKnob,      compLabel,      "COMP",    0.0);
+    setupKnob(gateKnob,      gateLabel,      "GATE",    0.0);
+    setupKnob(gainKnob,      gainLabel,      "GAIN",    0.5);
 
-    // Load deathcore preset as default
-    applyPreset(kPresets[0]);
+    transposeKnob.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    transposeKnob.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    transposeKnob.setRange(-12.0, 12.0, 1.0);
+    transposeKnob.setValue(0.0, juce::dontSendNotification);
+    transposeKnob.setDoubleClickReturnValue(true, 0.0);
+    transposeKnob.addListener(this);
+    addAndMakeVisible(transposeKnob);
+    transposeLabel.setText("XPOSE", juce::dontSendNotification);
+    transposeLabel.setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(transposeLabel);
+    registerKnob(transposeKnob, transposeLabel);
+
+    // ── TONE section knobs ──
+    setupKnob(bassKnob,      bassLabel,      "BASS",    0.5);
+    setupKnob(midKnob,       midLabel,       "MID",     0.5);
+    setupKnob(trebleKnob,    trebleLabel,    "TREBLE",  0.5);
+    setupKnob(presenceKnob,  presenceLabel,  "PRESENCE",0.5);
+
+    // ── OUTPUT section knobs ──
+    setupKnob(volumeKnob,    volumeLabel,    "VOLUME",  0.5);
+    setupKnob(sagKnob,       sagLabel,       "SAG",     0.0);
+    setupKnob(tremKnob,      tremLabel,      "TREM",    0.0);
+
+    // ── FX section knobs ──
+    setupKnob(reverbKnob,    reverbLabel,    "REVERB",  0.0);
+    setupKnob(chorusKnob,    chorusLabel,    "CHORUS",  0.0);
+    setupKnob(delayKnob,     delayLabel,     "DELAY",   0.0);
+    setupKnob(widthKnob,     widthLabel,     "WIDTH",   0.5);
+    setupKnob(phaserKnob,    phaserLabel,    "PHASE",   0.0);
+    setupKnob(flangerKnob,   flangerLabel,   "FLANGE",  0.0);
 
     // ── IR section ──
     irNameLabel.setText("No IR loaded", juce::dontSendNotification);
@@ -334,15 +369,96 @@ MainComponent::MainComponent()
     irClearBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
     addAndMakeVisible(irClearBtn);
 
-    // ── Audio button ──
+    // ── Header buttons ──
     audioBtn.addListener(this);
     audioBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
     addAndMakeVisible(audioBtn);
 
-    addAndMakeVisible(meter);
+    tunerBtn.setClickingTogglesState(true);
+    tunerBtn.addListener(this);
+    tunerBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
+    addAndMakeVisible(tunerBtn);
+
+    savePresetBtn.addListener(this);
+    savePresetBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
+    addAndMakeVisible(savePresetBtn);
+
+    loadPresetBtn.addListener(this);
+    loadPresetBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
+    addAndMakeVisible(loadPresetBtn);
+
+    // ── Cabinet character buttons ──
+    auto setupCabBtn = [this](juce::TextButton& btn)
+    {
+        btn.setClickingTogglesState(false);
+        btn.addListener(this);
+        btn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
+        addAndMakeVisible(btn);
+    };
+    setupCabBtn(cabV30);   cabV30 .setToggleState(true,  juce::dontSendNotification);
+    setupCabBtn(cabG12);
+    setupCabBtn(cabGrbn);
+    setupCabBtn(cabOpen);
+
+    // ── Delay subdivision buttons ──
+    auto setupSubdivBtn = [this](juce::TextButton& btn)
+    {
+        btn.setClickingTogglesState(false);
+        btn.addListener(this);
+        btn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
+        addAndMakeVisible(btn);
+    };
+    setupSubdivBtn(subdivQ);  subdivQ.setToggleState(true, juce::dontSendNotification);
+    setupSubdivBtn(subdivD8);
+    setupSubdivBtn(subdiv8);
+
+    // ── Tap tempo ──
+    tapBtn.addListener(this);
+    tapBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
+    addAndMakeVisible(tapBtn);
+
+    bpmLabel.setText("-- BPM", juce::dontSendNotification);
+    bpmLabel.setJustificationType(juce::Justification::centredLeft);
+    bpmLabel.setColour(juce::Label::textColourId, juce::Colour(0xff555250));
+    bpmLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+    addAndMakeVisible(bpmLabel);
+
+    // ── Tuner (hidden initially) ──
+    addAndMakeVisible(tuner);
+    tuner.setVisible(false);
+
+    // ── Meters ──
+    addAndMakeVisible(inputMeter);
+    addAndMakeVisible(outputMeter);
+
+    // ── Neural model loader ──
+    neuralLoadBtn.addListener(this);
+    neuralLoadBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
+    addAndMakeVisible(neuralLoadBtn);
+
+    neuralClearBtn.addListener(this);
+    neuralClearBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
+    addAndMakeVisible(neuralClearBtn);
+
+    neuralNameLabel.setText("No neural model", juce::dontSendNotification);
+    neuralNameLabel.setJustificationType(juce::Justification::centredLeft);
+    neuralNameLabel.setColour(juce::Label::textColourId, juce::Colour(0xff555250));
+    neuralNameLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+    addAndMakeVisible(neuralNameLabel);
+
+    // ── EQ panel ──
+    eqPanel.onEqChanged = [this] { syncParams(); };
+    addAndMakeVisible(eqPanel);
+
+    // ── Gate/Comp widget ──
+    gateCompWidget = std::make_unique<GateCompWidget>(processor);
+    addAndMakeVisible(*gateCompWidget);
+
+    // ── Default preset ──
+    applyPreset(kPresets[3]);   // HYBRID
 
     setAudioChannels(2, 2);
-    setSize(920, 390);
+    setSize(960, 534);
 }
 
 MainComponent::~MainComponent()
@@ -351,22 +467,46 @@ MainComponent::~MainComponent()
     shutdownAudio();
 }
 
-void MainComponent::setupKnob(juce::Slider& k, juce::Label& l, const juce::String& name)
+// ── Knob helper ────────────────────────────────────────────────────────────
+
+juce::String MainComponent::formatKnobValue(juce::Slider& k) const
+{
+    if (&k == &transposeKnob)
+    {
+        const int v = static_cast<int>(std::round(k.getValue()));
+        return v == 0 ? "0 ST" : (v > 0 ? "+" : "") + juce::String(v) + " ST";
+    }
+    const float v = static_cast<float>(k.getValue());
+    if (v < 0.005f) return "0";
+    return juce::String(v, 2);
+}
+
+void MainComponent::registerKnob(juce::Slider& k, juce::Label& l)
+{
+    knobLabelMap[&k] = { &l, {}, false };
+}
+
+void MainComponent::setupKnob(juce::Slider& k, juce::Label& l,
+                               const juce::String& name, double defaultVal)
 {
     k.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     k.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     k.setRange(0.0, 1.0, 0.001);
+    k.setDoubleClickReturnValue(true, defaultVal);
     k.addListener(this);
     addAndMakeVisible(k);
 
     l.setText(name, juce::dontSendNotification);
     l.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(l);
+
+    registerKnob(k, l);
 }
 
 void MainComponent::styleChannelButton(juce::TextButton& btn, const juce::String& label)
 {
     btn.setButtonText(label);
+    btn.setComponentID("channel");
     btn.setClickingTogglesState(false);
     btn.addListener(this);
     addAndMakeVisible(btn);
@@ -375,6 +515,7 @@ void MainComponent::styleChannelButton(juce::TextButton& btn, const juce::String
 void MainComponent::stylePresetButton(juce::TextButton& btn, const juce::String& label)
 {
     btn.setButtonText(label);
+    btn.setComponentID("preset");
     btn.setClickingTogglesState(false);
     btn.addListener(this);
     addAndMakeVisible(btn);
@@ -391,7 +532,7 @@ void MainComponent::prepareToPlay(int blockSize, double sr)
 
 void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& info)
 {
-    auto* buf         = info.buffer;
+    auto* buf       = info.buffer;
     const int start   = info.startSample;
     const int samples = info.numSamples;
 
@@ -419,29 +560,154 @@ void MainComponent::releaseResources() {}
 
 // ── UI events ──────────────────────────────────────────────────────────────
 
-void MainComponent::sliderValueChanged(juce::Slider*) { syncParams(); }
+void MainComponent::sliderValueChanged(juce::Slider* s)
+{
+    // During drag: update label with live value
+    auto it = knobLabelMap.find(s);
+    if (it != knobLabelMap.end() && it->second.dragging && it->second.label)
+        it->second.label->setText(formatKnobValue(*s), juce::dontSendNotification);
+
+    if (s == &transposeKnob && !(it != knobLabelMap.end() && it->second.dragging))
+    {
+        const int v = static_cast<int>(std::round(transposeKnob.getValue()));
+        transposeLabel.setText(v == 0 ? "XPOSE"
+            : (v > 0 ? "+" : "") + juce::String(v) + " ST",
+            juce::dontSendNotification);
+    }
+    if (currentPresetIdx != -1) { currentPresetIdx = -1; updatePresetButtonStates(); }
+    syncParams();
+}
+
+void MainComponent::sliderDragStarted(juce::Slider* s)
+{
+    auto it = knobLabelMap.find(s);
+    if (it != knobLabelMap.end() && it->second.label)
+    {
+        it->second.savedText = it->second.label->getText();
+        it->second.dragging  = true;
+        it->second.label->setText(formatKnobValue(*s), juce::dontSendNotification);
+    }
+}
+
+void MainComponent::sliderDragEnded(juce::Slider* s)
+{
+    auto it = knobLabelMap.find(s);
+    if (it != knobLabelMap.end() && it->second.label)
+    {
+        it->second.dragging = false;
+        it->second.label->setText(it->second.savedText, juce::dontSendNotification);
+    }
+    // Special case: transpose label shows semitones when not dragging
+    if (s == &transposeKnob)
+    {
+        const int v = static_cast<int>(std::round(transposeKnob.getValue()));
+        transposeLabel.setText(v == 0 ? "XPOSE"
+            : (v > 0 ? "+" : "") + juce::String(v) + " ST",
+            juce::dontSendNotification);
+    }
+}
 
 void MainComponent::buttonClicked(juce::Button* btn)
 {
-    if (btn == &chClean)  { currentChannel = AmpProcessor::Channel::Clean;  updateChannelButtonStates(); syncParams(); return; }
-    if (btn == &chCrunch) { currentChannel = AmpProcessor::Channel::Crunch; updateChannelButtonStates(); syncParams(); return; }
-    if (btn == &chLead)   { currentChannel = AmpProcessor::Channel::Lead;   updateChannelButtonStates(); syncParams(); return; }
+    // Channel
+    if (btn == &chClean)  { currentChannel = AmpProcessor::Channel::Clean;  currentPresetIdx = -1; updatePresetButtonStates(); updateChannelButtonStates(); updateNeuralLabel(); syncParams(); return; }
+    if (btn == &chCrunch) { currentChannel = AmpProcessor::Channel::Crunch; currentPresetIdx = -1; updatePresetButtonStates(); updateChannelButtonStates(); updateNeuralLabel(); syncParams(); return; }
+    if (btn == &chLead)   { currentChannel = AmpProcessor::Channel::Lead;   currentPresetIdx = -1; updatePresetButtonStates(); updateChannelButtonStates(); updateNeuralLabel(); syncParams(); return; }
+    if (btn == &boostBtn) { currentPresetIdx = -1; updatePresetButtonStates(); syncParams(); return; }
 
-    if (btn == &boostBtn) { syncParams(); return; }
+    // Presets
+    if (btn == &preDeftones) { applyPreset(kPresets[0]); return; }
+    if (btn == &preKnocked)  { applyPreset(kPresets[1]); return; }
+    if (btn == &preBilmuri)  { applyPreset(kPresets[2]); return; }
+    if (btn == &preHybrid)   { applyPreset(kPresets[3]); return; }
+    if (btn == &preHotMul)   { applyPreset(kPresets[4]); return; }
 
-    if (btn == &preDeathcore) { applyPreset(kPresets[0]); return; }
-    if (btn == &preShadow)    { applyPreset(kPresets[1]); return; }
-    if (btn == &preHybrid)    { applyPreset(kPresets[2]); return; }
-    if (btn == &preClean)     { applyPreset(kPresets[3]); return; }
-    if (btn == &preTwinkle)   { applyPreset(kPresets[4]); return; }
+    // IR
+    // Neural model loading (applies to the currently-selected channel)
+    if (btn == &neuralLoadBtn)  { openNeuralModelChooser(); return; }
+    if (btn == &neuralClearBtn) {
+        processor.clearNeuralModel(currentChannel);
+        updateNeuralLabel();
+        return;
+    }
 
     if (btn == &irLoadBtn)  { openIRChooser(); return; }
     if (btn == &irClearBtn) {
         processor.clearIR();
         irNameLabel.setText("No IR loaded", juce::dontSendNotification);
+        irNameLabel.setColour(juce::Label::textColourId, juce::Colour(0xff666666));
         return;
     }
-    if (btn == &audioBtn) { openAudioSettings(); return; }
+
+    // Header
+    if (btn == &audioBtn)  { openAudioSettings(); return; }
+    if (btn == &tunerBtn)  {
+        tuner.setVisible(tunerBtn.getToggleState());
+        return;
+    }
+    if (btn == &savePresetBtn) { savePreset(); return; }
+    if (btn == &loadPresetBtn) { loadPreset(); return; }
+
+    // Tap tempo
+    if (btn == &tapBtn) { handleTap(); return; }
+
+    // Delay subdivisions
+    if (btn == &subdivQ)  { currentSubdivMult = 1.0f;   subdivQ.setToggleState(true,  juce::dontSendNotification); subdivD8.setToggleState(false, juce::dontSendNotification); subdiv8.setToggleState(false, juce::dontSendNotification); syncParams(); return; }
+    if (btn == &subdivD8) { currentSubdivMult = 0.75f;  subdivQ.setToggleState(false, juce::dontSendNotification); subdivD8.setToggleState(true,  juce::dontSendNotification); subdiv8.setToggleState(false, juce::dontSendNotification); syncParams(); return; }
+    if (btn == &subdiv8)  { currentSubdivMult = 0.5f;   subdivQ.setToggleState(false, juce::dontSendNotification); subdivD8.setToggleState(false, juce::dontSendNotification); subdiv8.setToggleState(true,  juce::dontSendNotification); syncParams(); return; }
+
+    // Cabinet character
+    auto selectCab = [this](AmpProcessor::CabType t) {
+        currentCabType = t;
+        cabV30 .setToggleState(t == AmpProcessor::CabType::V30,       juce::dontSendNotification);
+        cabG12 .setToggleState(t == AmpProcessor::CabType::G12T75,    juce::dontSendNotification);
+        cabGrbn.setToggleState(t == AmpProcessor::CabType::Greenback, juce::dontSendNotification);
+        cabOpen.setToggleState(t == AmpProcessor::CabType::Open,      juce::dontSendNotification);
+        syncParams();
+    };
+    if (btn == &cabV30)  { selectCab(AmpProcessor::CabType::V30);       return; }
+    if (btn == &cabG12)  { selectCab(AmpProcessor::CabType::G12T75);    return; }
+    if (btn == &cabGrbn) { selectCab(AmpProcessor::CabType::Greenback); return; }
+    if (btn == &cabOpen) { selectCab(AmpProcessor::CabType::Open);      return; }
+}
+
+void MainComponent::handleTap()
+{
+    const juce::int64 now = juce::Time::currentTimeMillis();
+
+    // Shift-register: newest tap always lands at index 3 in chronological order.
+    // This keeps linear-pair iteration correct regardless of how many taps have fired.
+    tapHistory[0] = tapHistory[1];
+    tapHistory[1] = tapHistory[2];
+    tapHistory[2] = tapHistory[3];
+    tapHistory[3] = now;
+    if (tapHistoryIdx < 4) ++tapHistoryIdx;
+
+    if (tapHistoryIdx < 2) return;
+
+    // Average up to 3 consecutive inter-tap intervals (last 4 taps)
+    float totalMs = 0.0f;
+    int   count   = 0;
+    const int startIdx = 4 - tapHistoryIdx;   // first valid slot
+    for (int i = startIdx; i < 3; ++i)
+    {
+        if (tapHistory[i] > 0 && tapHistory[i + 1] > tapHistory[i])
+        {
+            const float ms = static_cast<float>(tapHistory[i + 1] - tapHistory[i]);
+            if (ms > 100.0f && ms < 3000.0f)   // 20–600 BPM guard
+            {
+                totalMs += ms;
+                ++count;
+            }
+        }
+    }
+
+    if (count == 0) return;
+
+    currentDelayMs = totalMs / static_cast<float>(count);
+    const int bpm = static_cast<int>(std::round(60000.0f / currentDelayMs));
+    bpmLabel.setText(juce::String(bpm) + " BPM", juce::dontSendNotification);
+    syncParams();
 }
 
 void MainComponent::updateChannelButtonStates()
@@ -452,25 +718,56 @@ void MainComponent::updateChannelButtonStates()
     repaint();
 }
 
+void MainComponent::updatePresetButtonStates()
+{
+    preDeftones.setToggleState(currentPresetIdx == 0, juce::dontSendNotification);
+    preKnocked .setToggleState(currentPresetIdx == 1, juce::dontSendNotification);
+    preBilmuri .setToggleState(currentPresetIdx == 2, juce::dontSendNotification);
+    preHybrid  .setToggleState(currentPresetIdx == 3, juce::dontSendNotification);
+    preHotMul  .setToggleState(currentPresetIdx == 4, juce::dontSendNotification);
+}
+
 void MainComponent::applyPreset(const Preset& p)
 {
+    currentPresetIdx = -1;
+    for (int i = 0; i < (int)std::size(kPresets); ++i)
+        if (&p == &kPresets[i]) { currentPresetIdx = i; break; }
+    updatePresetButtonStates();
+
     currentChannel = p.channel;
     updateChannelButtonStates();
-
     boostBtn.setToggleState(p.boost, juce::dontSendNotification);
 
-    gateKnob.setValue(p.gate,         juce::dontSendNotification);
-    gainKnob.setValue(p.gain,         juce::dontSendNotification);
-    bassKnob.setValue(p.bass,         juce::dontSendNotification);
-    midKnob.setValue(p.mid,           juce::dontSendNotification);
-    trebleKnob.setValue(p.treble,     juce::dontSendNotification);
+    compKnob    .setValue(p.comp,     juce::dontSendNotification);
+    gateKnob    .setValue(p.gate,     juce::dontSendNotification);
+    gainKnob    .setValue(p.gain,     juce::dontSendNotification);
+    bassKnob    .setValue(p.bass,     juce::dontSendNotification);
+    midKnob     .setValue(p.mid,      juce::dontSendNotification);
+    trebleKnob  .setValue(p.treble,   juce::dontSendNotification);
     presenceKnob.setValue(p.presence, juce::dontSendNotification);
-    volumeKnob.setValue(p.volume,     juce::dontSendNotification);
-    reverbKnob.setValue(p.reverb,     juce::dontSendNotification);
-    chorusKnob.setValue(p.chorus,     juce::dontSendNotification);
-    delayKnob.setValue(p.delay,       juce::dontSendNotification);
-    sagKnob.setValue(p.sag,           juce::dontSendNotification);
-    tremKnob.setValue(p.trem,         juce::dontSendNotification);
+    volumeKnob  .setValue(p.volume,   juce::dontSendNotification);
+    sagKnob     .setValue(p.sag,      juce::dontSendNotification);
+    tremKnob    .setValue(p.trem,     juce::dontSendNotification);
+    reverbKnob  .setValue(p.reverb,   juce::dontSendNotification);
+    chorusKnob  .setValue(p.chorus,   juce::dontSendNotification);
+    delayKnob   .setValue(p.delay,    juce::dontSendNotification);
+    widthKnob   .setValue(p.width,    juce::dontSendNotification);
+    phaserKnob  .setValue(p.phaser,   juce::dontSendNotification);
+    flangerKnob .setValue(p.flanger,  juce::dontSendNotification);
+    transposeKnob.setValue(p.transpose, juce::dontSendNotification);
+
+    currentCabType = p.cabType;
+    cabV30 .setToggleState(p.cabType == AmpProcessor::CabType::V30,       juce::dontSendNotification);
+    cabG12 .setToggleState(p.cabType == AmpProcessor::CabType::G12T75,    juce::dontSendNotification);
+    cabGrbn.setToggleState(p.cabType == AmpProcessor::CabType::Greenback, juce::dontSendNotification);
+    cabOpen.setToggleState(p.cabType == AmpProcessor::CabType::Open,      juce::dontSendNotification);
+    transposeLabel.setText(p.transpose == 0 ? "XPOSE"
+        : (p.transpose > 0 ? "+" : "") + juce::String(p.transpose) + " ST",
+        juce::dontSendNotification);
+
+    currentDelayMs = p.delayTimeMs;
+    const int bpm = static_cast<int>(std::round(60000.0f / currentDelayMs));
+    bpmLabel.setText(juce::String(bpm) + " BPM", juce::dontSendNotification);
 
     syncParams();
     repaint();
@@ -479,39 +776,48 @@ void MainComponent::applyPreset(const Preset& p)
 void MainComponent::syncParams()
 {
     AmpProcessor::Params p;
-    p.channel  = currentChannel;
-    p.boost    = boostBtn.getToggleState();
-    p.gate     = static_cast<float>(gateKnob.getValue());
-    p.gain     = static_cast<float>(gainKnob.getValue());
-    p.bass     = static_cast<float>(bassKnob.getValue());
-    p.mid      = static_cast<float>(midKnob.getValue());
-    p.treble   = static_cast<float>(trebleKnob.getValue());
-    p.presence = static_cast<float>(presenceKnob.getValue());
-    p.volume   = static_cast<float>(volumeKnob.getValue());
-    p.reverb   = static_cast<float>(reverbKnob.getValue());
-    p.chorus   = static_cast<float>(chorusKnob.getValue());
-    p.delay    = static_cast<float>(delayKnob.getValue());
-    p.sag      = static_cast<float>(sagKnob.getValue());
-    p.trem     = static_cast<float>(tremKnob.getValue());
+    p.channel     = currentChannel;
+    p.boost       = boostBtn.getToggleState();
+    p.comp        = static_cast<float>(compKnob.getValue());
+    p.gate        = static_cast<float>(gateKnob.getValue());
+    p.gain        = static_cast<float>(gainKnob.getValue());
+    p.bass        = static_cast<float>(bassKnob.getValue());
+    p.mid         = static_cast<float>(midKnob.getValue());
+    p.treble      = static_cast<float>(trebleKnob.getValue());
+    p.presence    = static_cast<float>(presenceKnob.getValue());
+    p.volume      = static_cast<float>(volumeKnob.getValue());
+    p.sag         = static_cast<float>(sagKnob.getValue());
+    p.trem        = static_cast<float>(tremKnob.getValue());
+    p.reverb      = static_cast<float>(reverbKnob.getValue());
+    p.chorus      = static_cast<float>(chorusKnob.getValue());
+    p.delay       = static_cast<float>(delayKnob.getValue());
+    p.delayTimeMs = currentDelayMs * currentSubdivMult;
+    p.width       = static_cast<float>(widthKnob.getValue());
+    p.phaser      = static_cast<float>(phaserKnob.getValue());
+    p.flanger     = static_cast<float>(flangerKnob.getValue());
+    p.cabType     = currentCabType;
+    p.transpose   = static_cast<int>(std::round(transposeKnob.getValue()));
+    // Post-amp EQ bands from EqPanel
+    const auto* eb = eqPanel.getBands();
+    for (int b = 0; b < 4; ++b) p.eq[b] = eb[b];
     processor.setParams(p);
 }
+
+// ── IR / Audio ─────────────────────────────────────────────────────────────
 
 void MainComponent::openAudioSettings()
 {
     auto* sel = new juce::AudioDeviceSelectorComponent(
-        deviceManager,
-        1, 2,
-        1, 2,
-        false, false, false, false);
+        deviceManager, 1, 2, 1, 2, false, false, false, false);
     sel->setSize(500, 340);
 
     juce::DialogWindow::LaunchOptions o;
     o.content.setOwned(sel);
-    o.dialogTitle            = "Audio Settings";
-    o.dialogBackgroundColour = juce::Colour(0xff1a1a1a);
+    o.dialogTitle             = "Audio Settings";
+    o.dialogBackgroundColour  = juce::Colour(0xff1a1a1a);
     o.escapeKeyTriggersCloseButton = true;
-    o.useNativeTitleBar      = true;
-    o.resizable              = false;
+    o.useNativeTitleBar       = true;
+    o.resizable               = false;
     o.launchAsync();
 }
 
@@ -537,6 +843,192 @@ void MainComponent::openIRChooser()
         });
 }
 
+// ── Neural model ───────────────────────────────────────────────────────────
+
+void MainComponent::updateNeuralLabel()
+{
+    const auto name = processor.getNeuralModelName(currentChannel);
+    if (name.isEmpty())
+    {
+        neuralNameLabel.setText("No neural model", juce::dontSendNotification);
+        neuralNameLabel.setColour(juce::Label::textColourId, juce::Colour(0xff555250));
+    }
+    else
+    {
+        neuralNameLabel.setText(name, juce::dontSendNotification);
+        neuralNameLabel.setColour(juce::Label::textColourId, juce::Colour(0xff88ee88));
+    }
+}
+
+void MainComponent::openNeuralModelChooser()
+{
+    const auto modelsDir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                               .getChildFile("UMBRA Models");
+    modelsDir.createDirectory();
+
+    fileChooser = std::make_unique<juce::FileChooser>(
+        "Load Neural Amp Model (LSTM .json)",
+        modelsDir.exists() ? modelsDir : juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+        "*.json");
+
+    fileChooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this](const juce::FileChooser& fc)
+        {
+            const auto results = fc.getResults();
+            if (results.isEmpty()) return;
+
+            // Loading can be slow for large models — run on background thread
+            const auto file   = results[0];
+            const auto ch     = currentChannel;
+            juce::Thread::launch([this, file, ch]
+            {
+                const bool ok = processor.loadNeuralModel(file, ch);
+                juce::MessageManager::callAsync([this, ok, ch]
+                {
+                    if (ok && ch == currentChannel)
+                        updateNeuralLabel();
+                    else if (!ok)
+                        juce::AlertWindow::showMessageBoxAsync(
+                            juce::AlertWindow::WarningIcon, "Neural Model",
+                            "Could not load this model.\n"
+                            "Supported: LSTM hidden_size 8/16/20/24/32/40 (GuitarML / NeuralPi / Proteus format).");
+                });
+            });
+        });
+}
+
+// ── Preset save / load ─────────────────────────────────────────────────────
+
+void MainComponent::savePreset()
+{
+    fileChooser = std::make_unique<juce::FileChooser>(
+        "Save Preset",
+        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory),
+        "*.umbra");
+
+    fileChooser->launchAsync(
+        juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
+        [this](const juce::FileChooser& fc)
+        {
+            const auto results = fc.getResults();
+            if (results.isEmpty()) return;
+
+            auto file = results[0].withFileExtension(".umbra");
+
+            juce::DynamicObject::Ptr obj (new juce::DynamicObject());
+            const auto ch = currentChannel;
+            obj->setProperty("channel",     ch == AmpProcessor::Channel::Clean  ? "Clean"
+                                          : ch == AmpProcessor::Channel::Crunch ? "Crunch"
+                                                                                : "Lead");
+            obj->setProperty("boost",       boostBtn.getToggleState());
+            obj->setProperty("comp",        compKnob.getValue());
+            obj->setProperty("gate",        gateKnob.getValue());
+            obj->setProperty("gain",        gainKnob.getValue());
+            obj->setProperty("bass",        bassKnob.getValue());
+            obj->setProperty("mid",         midKnob.getValue());
+            obj->setProperty("treble",      trebleKnob.getValue());
+            obj->setProperty("presence",    presenceKnob.getValue());
+            obj->setProperty("volume",      volumeKnob.getValue());
+            obj->setProperty("sag",         sagKnob.getValue());
+            obj->setProperty("trem",        tremKnob.getValue());
+            obj->setProperty("reverb",      reverbKnob.getValue());
+            obj->setProperty("chorus",      chorusKnob.getValue());
+            obj->setProperty("delay",       delayKnob.getValue());
+            obj->setProperty("delayTimeMs", static_cast<double>(currentDelayMs));
+            obj->setProperty("subdivMult",  static_cast<double>(currentSubdivMult));
+            obj->setProperty("transpose",   static_cast<int>(std::round(transposeKnob.getValue())));
+            obj->setProperty("width",       widthKnob.getValue());
+            const auto ct = currentCabType;
+            obj->setProperty("cabType", ct == AmpProcessor::CabType::G12T75    ? "G12T75"
+                                      : ct == AmpProcessor::CabType::Greenback ? "Greenback"
+                                      : ct == AmpProcessor::CabType::Open      ? "Open"
+                                                                                : "V30");
+
+            file.replaceWithText(juce::JSON::toString(juce::var(obj.get()), true));
+        });
+}
+
+void MainComponent::loadPreset()
+{
+    fileChooser = std::make_unique<juce::FileChooser>(
+        "Load Preset",
+        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory),
+        "*.umbra");
+
+    fileChooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this](const juce::FileChooser& fc)
+        {
+            const auto results = fc.getResults();
+            if (results.isEmpty()) return;
+
+            const auto parsed = juce::JSON::parse(results[0].loadFileAsString());
+            const auto* obj   = parsed.getDynamicObject();
+            if (obj == nullptr) return;
+
+            auto getF = [&](const char* id, float def) {
+                const auto v = obj->getProperty(id);
+                return v.isUndefined() ? def : static_cast<float>(static_cast<double>(v));
+            };
+            auto getI = [&](const char* id, int def) {
+                const auto v = obj->getProperty(id);
+                return v.isUndefined() ? def : static_cast<int>(v);
+            };
+            auto getB = [&](const char* id, bool def) {
+                const auto v = obj->getProperty(id);
+                return v.isUndefined() ? def : static_cast<bool>(v);
+            };
+
+            const juce::String chStr = obj->getProperty("channel").toString();
+            currentChannel = (chStr == "Clean")  ? AmpProcessor::Channel::Clean
+                           : (chStr == "Crunch") ? AmpProcessor::Channel::Crunch
+                                                 : AmpProcessor::Channel::Lead;
+            updateChannelButtonStates();
+            boostBtn.setToggleState(getB("boost", false), juce::dontSendNotification);
+
+            compKnob    .setValue(juce::jlimit(0.0f,1.0f,getF("comp",     0.0f)), juce::dontSendNotification);
+            gateKnob    .setValue(juce::jlimit(0.0f,1.0f,getF("gate",     0.0f)), juce::dontSendNotification);
+            gainKnob    .setValue(juce::jlimit(0.0f,1.0f,getF("gain",     0.5f)), juce::dontSendNotification);
+            bassKnob    .setValue(juce::jlimit(0.0f,1.0f,getF("bass",     0.5f)), juce::dontSendNotification);
+            midKnob     .setValue(juce::jlimit(0.0f,1.0f,getF("mid",      0.5f)), juce::dontSendNotification);
+            trebleKnob  .setValue(juce::jlimit(0.0f,1.0f,getF("treble",   0.5f)), juce::dontSendNotification);
+            presenceKnob.setValue(juce::jlimit(0.0f,1.0f,getF("presence", 0.5f)), juce::dontSendNotification);
+            volumeKnob  .setValue(juce::jlimit(0.0f,1.0f,getF("volume",   0.5f)), juce::dontSendNotification);
+            sagKnob     .setValue(juce::jlimit(0.0f,1.0f,getF("sag",      0.0f)), juce::dontSendNotification);
+            tremKnob    .setValue(juce::jlimit(0.0f,1.0f,getF("trem",     0.0f)), juce::dontSendNotification);
+            reverbKnob  .setValue(juce::jlimit(0.0f,1.0f,getF("reverb",   0.0f)), juce::dontSendNotification);
+            chorusKnob  .setValue(juce::jlimit(0.0f,1.0f,getF("chorus",   0.0f)), juce::dontSendNotification);
+            delayKnob   .setValue(juce::jlimit(0.0f,1.0f,getF("delay",    0.0f)), juce::dontSendNotification);
+            transposeKnob.setValue(juce::jlimit(-12.0,12.0,(double)getI("transpose",0)), juce::dontSendNotification);
+
+            currentDelayMs    = getF("delayTimeMs", 350.0f);
+            currentSubdivMult = getF("subdivMult",  1.0f);
+            subdivQ .setToggleState(currentSubdivMult > 0.9f,                                              juce::dontSendNotification);
+            subdivD8.setToggleState(currentSubdivMult > 0.6f && currentSubdivMult < 0.9f,                 juce::dontSendNotification);
+            subdiv8 .setToggleState(currentSubdivMult < 0.6f,                                             juce::dontSendNotification);
+            const int bpm = static_cast<int>(std::round(60000.0f / currentDelayMs));
+            bpmLabel.setText(juce::String(bpm) + " BPM", juce::dontSendNotification);
+
+            widthKnob.setValue(juce::jlimit(0.0f, 1.0f, getF("width", 0.5f)), juce::dontSendNotification);
+
+            const juce::String cabStr = obj->getProperty("cabType").toString();
+            currentCabType = (cabStr == "G12T75")    ? AmpProcessor::CabType::G12T75
+                           : (cabStr == "Greenback") ? AmpProcessor::CabType::Greenback
+                           : (cabStr == "Open")      ? AmpProcessor::CabType::Open
+                                                     : AmpProcessor::CabType::V30;
+            cabV30 .setToggleState(currentCabType == AmpProcessor::CabType::V30,       juce::dontSendNotification);
+            cabG12 .setToggleState(currentCabType == AmpProcessor::CabType::G12T75,    juce::dontSendNotification);
+            cabGrbn.setToggleState(currentCabType == AmpProcessor::CabType::Greenback, juce::dontSendNotification);
+            cabOpen.setToggleState(currentCabType == AmpProcessor::CabType::Open,      juce::dontSendNotification);
+
+            currentPresetIdx = -1;
+            updatePresetButtonStates();
+            syncParams();
+            repaint();
+        });
+}
+
 // ── Paint ──────────────────────────────────────────────────────────────────
 
 void MainComponent::paint(juce::Graphics& g)
@@ -544,97 +1036,92 @@ void MainComponent::paint(juce::Graphics& g)
     const int W = getWidth();
     const int H = getHeight();
 
-    // ── Full background ──
+    // Background
     g.fillAll(juce::Colour(0xff0d0b09));
 
-    // ── Header ──
+    // Header gradient
     {
         juce::ColourGradient hg(juce::Colour(0xff201e1c), 0.0f, 0.0f,
                                 juce::Colour(0xff0e0c0b), 0.0f, 48.0f, false);
         g.setGradientFill(hg);
         g.fillRect(0, 0, W, 48);
     }
-    // Thin accent bar under header
     g.setColour(kAccent);
     g.fillRect(0.0f, 46.0f, (float)W, 2.0f);
 
-    // ── UMBRA wordmark ──
-    // Red "U" + white "MBRA"
+    // UMBRA wordmark
     g.setFont(juce::Font(juce::FontOptions().withHeight(26.0f).withStyle("Bold")));
-    const int nameX = 18, nameY = 0, nameH = 46;
     g.setColour(kAccentHi);
-    g.drawText("U", nameX, nameY, 18, nameH, juce::Justification::centredLeft, false);
+    g.drawText("U", 18, 0, 18, 46, juce::Justification::centredLeft, false);
     g.setColour(juce::Colour(0xfff0eee8));
-    g.drawText("MBRA", nameX + 16, nameY, 76, nameH, juce::Justification::centredLeft, false);
-
-    // Model badge below wordmark
+    g.drawText("MBRA", 34, 0, 76, 46, juce::Justification::centredLeft, false);
     g.setFont(juce::Font(juce::FontOptions().withHeight(8.5f)));
     g.setColour(juce::Colour(0xff504844));
-    g.drawText("AMP SIMULATOR", nameX, 32, 120, 13, juce::Justification::centredLeft, false);
+    g.drawText("AMP SIMULATOR", 18, 32, 120, 13, juce::Justification::centredLeft, false);
 
-    // ── Preset row ──
+    // Preset row
     g.setColour(juce::Colour(0xff0e0c0b));
     g.fillRect(0, 48, W, 38);
-    // Subtle bottom edge
     g.setColour(juce::Colour(0xff282420));
     g.fillRect(0, 85, W, 1);
 
-    // ── Knob panel ──
+    // Knob panel
     const auto panelBounds = juce::Rectangle<int>(8, 92, W - 16, H - 100).toFloat();
-    // Panel background
     g.setColour(kPanel);
     g.fillRoundedRectangle(panelBounds, 6.0f);
-    // Inner top-edge highlight
     g.setColour(juce::Colour(0xff242220));
     g.drawLine(panelBounds.getX() + 6, panelBounds.getY() + 1,
                panelBounds.getRight() - 6, panelBounds.getY() + 1, 1.0f);
-    // Outer border
     g.setColour(juce::Colour(0xff2a2724));
     g.drawRoundedRectangle(panelBounds, 6.0f, 1.0f);
 
-    // ── Section labels + separators ──
-    // Compute slot width the same way resized() does
+    // Section labels + separators
+    // Layout mirrors resized(): input meter 22px + 4px gap on left,
+    // output meter 24px + 14px gap on right, 14 equal-width knob slots in between.
     {
-        const int meterX = W - 26 - 14;
-        const int kAreaW = meterX - 16;
-        const int slotW  = kAreaW / 12;
-        const int panelTop = 92;
-        const int panelH   = H - 100;
+        constexpr int kInMW    = 22;
+        constexpr int kInMGap  = 4;
+        constexpr int kOutMW   = 24;
+        constexpr int kOutMGap = 14;
+        // Input meter starts at x=12 (4px inside panel at x=8)
+        const int kAreaLeft  = 12 + kInMW + kInMGap;       // 38 — must match resized()
+        const int kAreaRight = W - kOutMW - kOutMGap;       // W - 38
+        const int kAreaW     = kAreaRight - kAreaLeft;
+        const int numKnobs   = 17;
+        const int slotW      = kAreaW / numKnobs;
+        const int panelTop   = 92;
+        const int panelH     = H - 100;
 
-        // Sections: INPUT(0-1), TONE(2-5), OUTPUT(6-8), FX(9-11)
+        // Sections: INPUT(0-3), TONE(4-7), OUTPUT(8-10), FX(11-16)
         struct Sec { int start, count; const char* name; } secs[] = {
-            { 0, 2, "INPUT" }, { 2, 4, "TONE" }, { 6, 3, "OUTPUT" }, { 9, 3, "FX" }
+            { 0, 4, "INPUT" }, { 4, 4, "TONE" }, { 8, 3, "OUTPUT" }, { 11, 6, "FX" }
         };
 
         g.setFont(juce::Font(juce::FontOptions().withHeight(8.5f)));
 
         for (auto& s : secs)
         {
-            const int sx = 12 + s.start * slotW;
+            const int sx = kAreaLeft + s.start * slotW;
             const int sw = s.count * slotW;
 
-            // Section label
             g.setColour(juce::Colour(0xff484240));
             g.drawText(s.name, sx, panelTop + 6, sw, 13, juce::Justification::centred, false);
 
-            // Separator after section (not after the last one)
-            if (s.start + s.count < 12)
+            if (s.start + s.count < numKnobs)
             {
-                const int sepX = 12 + (s.start + s.count) * slotW;
-                // Dark slot
+                const int sepX = kAreaLeft + (s.start + s.count) * slotW;
                 g.setColour(juce::Colour(0xff0a0908));
                 g.fillRect(sepX - 1, panelTop + 20, 2, panelH - 26);
-                // Lighter half
                 g.setColour(juce::Colour(0xff222220));
                 g.fillRect(sepX, panelTop + 20, 1, panelH - 26);
             }
         }
     }
 
-    // ── "CHANNEL" micro-label above header buttons ──
+    // "CHANNEL" micro-label
     g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
     g.setColour(juce::Colour(0xff3a3632));
-    g.drawText("CHANNEL", 162, 1, 230, 10, juce::Justification::centred, false);
+    g.drawText("CHANNEL", 178, 1, 230, 10, juce::Justification::centred, false);
 }
 
 // ── Resized ────────────────────────────────────────────────────────────────
@@ -642,72 +1129,134 @@ void MainComponent::paint(juce::Graphics& g)
 void MainComponent::resized()
 {
     const int W = getWidth();
+    const int H = getHeight();
 
-    // ── Header ──
-    audioBtn.setBounds(W - 72, 11, 62, 26);
+    // ── Header (y=0, h=48) ──────────────────────────────────────────────
+    // SAVE / LOAD preset — left of channel buttons
+    savePresetBtn.setBounds(112, 12, 42, 24);
+    loadPresetBtn.setBounds(156, 12, 42, 24);
 
-    // Channel buttons + 808 toggle (center-left of header)
+    // Channel buttons
     const int chW = 68, chH = 26, chY = 11;
-    const int chStart = 162;
-    chClean .setBounds(chStart,           chY, chW, chH);
-    chCrunch.setBounds(chStart + chW + 4, chY, chW, chH);
-    chLead  .setBounds(chStart + chW*2+8, chY, chW, chH);
-    boostBtn.setBounds(chStart + chW*3+16, chY, 46, chH);   // "808" button
+    const int chStart = 206;
+    chClean .setBounds(chStart,            chY, chW, chH);
+    chCrunch.setBounds(chStart + chW + 4,  chY, chW, chH);
+    chLead  .setBounds(chStart + chW*2+8,  chY, chW, chH);
+    boostBtn.setBounds(chStart + chW*3+16, chY, 46,  chH);
 
-    // ── Preset / IR row (y=48, h=38) ──
+    // Neural model loader — right after 808 button, compact
+    {
+        const int nX = chStart + chW*3 + 16 + 46 + 8;
+        neuralLoadBtn .setBounds(nX,      11, 62, 26);
+        neuralClearBtn.setBounds(nX + 65, 11, 22, 26);
+        neuralNameLabel.setBounds(nX + 90, 11, 160, 26);
+    }
+
+    // Cab character buttons — positioned after neural loader
+    {
+        const int cabStart = chStart + chW*3 + 16 + 46 + 270;
+        const int cW = 40, cH = 22, cY = 13;
+        cabV30 .setBounds(cabStart,           cY, cW,   cH);
+        cabG12 .setBounds(cabStart + cW + 3,  cY, cW,   cH);
+        cabGrbn.setBounds(cabStart + cW*2+6,  cY, cW+2, cH);
+        cabOpen.setBounds(cabStart + cW*3+12, cY, cW,   cH);
+    }
+
+    // TUNER + AUDIO — right of header
+    audioBtn .setBounds(W - 70, 11, 60, 26);
+    tunerBtn .setBounds(W - 70 - 62, 11, 58, 26);
+
+    // ── Preset / IR row (y=48, h=38) ────────────────────────────────────
     const int rowY = 50, rowH = 30;
-    const int pW = 80;
-    preDeathcore.setBounds(8,               rowY, pW, rowH);
-    preShadow   .setBounds(8 + pW + 3,      rowY, pW, rowH);
-    preHybrid   .setBounds(8 + pW*2 + 6,    rowY, pW, rowH);
-    preClean    .setBounds(8 + pW*3 + 9,    rowY, 66, rowH);
-    preTwinkle  .setBounds(8 + pW*3 + 9 + 66 + 3, rowY, 70, rowH);
+    const int pW = 80, pGap = 3;
+    preDeftones.setBounds(8,                   rowY, pW, rowH);
+    preKnocked .setBounds(8 + (pW+pGap),       rowY, pW, rowH);
+    preBilmuri .setBounds(8 + (pW+pGap)*2,     rowY, pW, rowH);
+    preHybrid  .setBounds(8 + (pW+pGap)*3,     rowY, pW, rowH);
+    preHotMul  .setBounds(8 + (pW+pGap)*4,     rowY, pW, rowH);
 
-    // IR area (right side of preset row)
+    // TAP tempo + subdivision buttons — after presets
+    const int afterPresets = 8 + (pW+pGap)*5 + 4;
+    tapBtn  .setBounds(afterPresets,       rowY, 40, rowH);
+    // Subdivision note-value buttons (small)
+    const int sdY = rowY + 4, sdH = rowH - 8;
+    subdivQ .setBounds(afterPresets + 44,      sdY, 34, sdH);
+    subdivD8.setBounds(afterPresets + 44 + 37, sdY, 38, sdH);
+    subdiv8 .setBounds(afterPresets + 44 + 79, sdY, 34, sdH);
+    bpmLabel.setBounds(afterPresets + 44 + 116, rowY, 62, rowH);
+
+    // IR — right-aligned
     const int irClearW = 26, irLoadW = 72;
     const int irRight  = W - 10;
     irClearBtn .setBounds(irRight - irClearW,               rowY, irClearW, rowH);
     irLoadBtn  .setBounds(irRight - irClearW - irLoadW - 4, rowY, irLoadW,  rowH);
-    const int irLabelX = 8 + pW*3 + 9 + 66 + 3 + 70 + 6;
+    // IR name label: starts after BPM readout, ends before LOAD IR button
+    const int irLabelX = afterPresets + 44 + 116 + 64;
     irNameLabel.setBounds(irLabelX, rowY,
-                          irRight - irClearW - irLoadW - 4 - irLabelX - 6,
-                          rowH);
+                          irRight - irClearW - irLoadW - 4 - irLabelX - 6, rowH);
 
-    // ── Knob area (y=92 downward) ── 12 knobs + section labels
-    const int knobAreaTop  = 92;
-    const int knobAreaH    = getHeight() - knobAreaTop - 8;
-    const int meterW       = 26;
-    const int meterX       = W - meterW - 14;
-    const int secLabelH    = 22;   // height reserved for section labels at panel top
+    // ── Knob + meter area (y=92 downward) ───────────────────────────────
+    const int panelTop  = 92;
+    const int panelH    = H - panelTop - 8;
+    const int secLabelH = 22;
 
-    meter.setBounds(meterX, knobAreaTop + 8, meterW, knobAreaH - 14);
+    // Meters: IN on left, OUT on right
+    constexpr int kInMW   = 22;
+    constexpr int kInMGap = 4;
+    constexpr int kOutMW  = 24;
+    constexpr int kOutMGap = 14;
+    const int inMeterX  = 12;
+    const int outMeterX = W - kOutMW - kOutMGap;
+    inputMeter .setBounds(inMeterX,  panelTop + 8, kInMW,  panelH - 14);
+    outputMeter.setBounds(outMeterX, panelTop + 8, kOutMW, panelH - 14);
+    // Gate/Comp widget: 18px wide, to the left of the first knob
+    if (gateCompWidget)
+        gateCompWidget->setBounds(inMeterX + kInMW + 2, panelTop + 8, 16, panelH - 14);
 
-    const int numKnobs = 12;
-    const int kAreaW   = meterX - 16;
-    const int slotW    = kAreaW / numKnobs;
-    const int knobSize = juce::jmin(knobAreaH - secLabelH - 34, slotW - 6);
-    const int labelH   = 14;
-    // Center knobs in the remaining space below the section-label strip
-    const int knobY    = knobAreaTop + secLabelH
-                         + (knobAreaH - secLabelH - knobSize - labelH) / 2;
+    // Tuner overlay — covers entire knob panel
+    tuner.setBounds(8, panelTop, W - 16, panelH);
+
+    // Knob slots
+    const int kAreaLeft = inMeterX + kInMW + kInMGap;   // 38
+    const int kAreaW    = outMeterX - kAreaLeft;
+    const int numKnobs  = 17;
+    const int slotW     = kAreaW / numKnobs;
+    const int knobSize  = juce::jmin(panelH - secLabelH - 34, slotW - 6);
+    const int labelH    = 14;
+    const int knobY     = panelTop + secLabelH
+                          + (panelH - secLabelH - knobSize - labelH) / 2;
 
     auto place = [&](juce::Slider& k, juce::Label& l, int idx)
     {
-        const int kx = 12 + idx * slotW + (slotW - knobSize) / 2;
+        const int kx = kAreaLeft + idx * slotW + (slotW - knobSize) / 2;
         k.setBounds(kx, knobY, knobSize, knobSize);
         l.setBounds(kx - 4, knobY + knobSize + 2, knobSize + 8, labelH);
     };
 
-    place(gateKnob,     gateLabel,     0);
-    place(gainKnob,     gainLabel,     1);
-    place(bassKnob,     bassLabel,     2);
-    place(midKnob,      midLabel,      3);
-    place(trebleKnob,   trebleLabel,   4);
-    place(presenceKnob, presenceLabel, 5);
-    place(volumeKnob,   volumeLabel,   6);
-    place(sagKnob,      sagLabel,      7);
-    place(tremKnob,     tremLabel,     8);
-    place(reverbKnob,   reverbLabel,   9);
-    place(chorusKnob,   chorusLabel,   10);
-    place(delayKnob,    delayLabel,    11);
+    // INPUT: COMP(0) GATE(1) GAIN(2) XPOSE(3)
+    place(compKnob,      compLabel,      0);
+    place(gateKnob,      gateLabel,      1);
+    place(gainKnob,      gainLabel,      2);
+    place(transposeKnob, transposeLabel, 3);
+    // TONE: BASS(4) MID(5) TREBLE(6) PRESENCE(7)
+    place(bassKnob,      bassLabel,      4);
+    place(midKnob,       midLabel,       5);
+    place(trebleKnob,    trebleLabel,    6);
+    place(presenceKnob,  presenceLabel,  7);
+    // OUTPUT: VOLUME(8) SAG(9) TREM(10)
+    place(volumeKnob,    volumeLabel,    8);
+    place(sagKnob,       sagLabel,       9);
+    place(tremKnob,      tremLabel,      10);
+    // FX: REVERB(11) CHORUS(12) DELAY(13) WIDTH(14) PHASE(15) FLANGE(16)
+    place(reverbKnob,    reverbLabel,    11);
+    place(chorusKnob,    chorusLabel,    12);
+    place(delayKnob,     delayLabel,     13);
+    place(widthKnob,     widthLabel,     14);
+    place(phaserKnob,    phaserLabel,    15);
+    place(flangerKnob,   flangerLabel,   16);
+
+    // ── EQ panel (below knob panel, fixed height 170px) ──────────────────
+    const int eqTop = panelTop + panelH + 8;
+    const int eqH   = H - eqTop - 6;
+    eqPanel.setBounds(8, eqTop, W - 16, std::max(10, eqH));
 }
