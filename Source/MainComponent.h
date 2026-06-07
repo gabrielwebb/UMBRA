@@ -2,7 +2,10 @@
 #include <JuceHeader.h>
 #include "DSP/AmpProcessor.h"
 #include "UI/EqPanel.h"
-#include "UI/SharedComponents.h"   // UmbraLAF, LevelMeter, genreColour
+#include "UI/SharedComponents.h"
+
+// ── TunerComponent (forward-declared — defined in MainComponent.cpp) ────────
+class TunerComponent;
 
 // ── Chromatic tuner overlay ────────────────────────────────────────────────
 class TunerComponent : public juce::Component, private juce::Timer
@@ -16,7 +19,7 @@ public:
 private:
     AmpProcessor& proc;
     std::array<float, AmpProcessor::kTunerBufLen> snapshot {};
-    std::vector<float> yinWork;   // pre-allocated, avoids heap alloc in timer
+    std::vector<float> yinWork;
     float        currentHz    = 0.0f;
     float        currentCents = 0.0f;
     juce::String noteName     { "--" };
@@ -25,6 +28,9 @@ private:
                         std::vector<float>& work, double sr);
     static std::pair<juce::String, float> frequencyToNote(float hz);
 };
+
+// ── NeuralSlotWidget (forward declaration) ─────────────────────────────────
+class NeuralSlotWidget;
 
 // ── Preset ─────────────────────────────────────────────────────────────────
 struct Preset
@@ -36,12 +42,12 @@ struct Preset
     float reverb, chorus, delay;
     float sag, trem;
     int   transpose;
-    float comp        = 0.0f;
-    float delayTimeMs = 350.0f;
+    float comp          = 0.0f;
+    float delayTimeMs   = 350.0f;
     AmpProcessor::CabType cabType = AmpProcessor::CabType::V30;
-    float width       = 0.5f;
-    float phaser      = 0.0f;
-    float flanger     = 0.0f;
+    float width         = 0.5f;
+    float phaser        = 0.0f;
+    float flanger       = 0.0f;
 };
 
 // ── MainComponent ──────────────────────────────────────────────────────────
@@ -66,14 +72,12 @@ private:
     void sliderDragEnded(juce::Slider*) override;
     void buttonClicked(juce::Button*) override;
 
-    // Per-knob: saves label text while dragging so we can restore it
     struct KnobLabelState { juce::Label* label = nullptr; juce::String savedText; bool dragging = false; };
     std::map<juce::Slider*, KnobLabelState> knobLabelMap;
     void registerKnob(juce::Slider& k, juce::Label& l);
     juce::String formatKnobValue(juce::Slider& k) const;
 
-    void setupKnob(juce::Slider&, juce::Label&, const juce::String& name,
-                   double defaultVal = 0.5);
+    void setupKnob(juce::Slider&, juce::Label&, const juce::String& name, double defaultVal = 0.5);
     void styleChannelButton(juce::TextButton&, const juce::String& label);
     void stylePresetButton(juce::TextButton&, const juce::String& label);
     void applyPreset(const Preset&);
@@ -85,6 +89,8 @@ private:
     void savePreset();
     void loadPreset();
     void handleTap();
+    void openNeuralModelChooser(AmpProcessor::Channel ch);
+    void updateAllNeuralSlots();
 
     // ── DSP ──────────────────────────────────────────────────────────────
     AmpProcessor processor;
@@ -98,7 +104,6 @@ private:
     juce::TextButton chCrunch { "CRUNCH" };
     juce::TextButton chLead   { "LEAD"   };
     juce::TextButton boostBtn { "808"    };
-
     AmpProcessor::Channel currentChannel = AmpProcessor::Channel::Lead;
     int currentPresetIdx = -1;
 
@@ -109,19 +114,17 @@ private:
     juce::TextButton preHybrid   { "HYBRID"   };
     juce::TextButton preHotMul   { "HOT MUL"  };
 
-    // ── Knobs (15 total) ─────────────────────────────────────────────────
-    // INPUT section (4)
+    // ── Knobs: row 1 — PREAMP + TONE (8 knobs) ───────────────────────────
     juce::Slider compKnob,     gateKnob,     gainKnob,     transposeKnob;
     juce::Label  compLabel,    gateLabel,    gainLabel,    transposeLabel;
-    // TONE section (4)
     juce::Slider bassKnob,     midKnob,      trebleKnob,   presenceKnob;
     juce::Label  bassLabel,    midLabel,     trebleLabel,  presenceLabel;
-    // OUTPUT section (3)
-    juce::Slider volumeKnob,   sagKnob,      tremKnob;
-    juce::Label  volumeLabel,  sagLabel,     tremLabel;
-    // FX section (6)
-    juce::Slider reverbKnob,   chorusKnob,   delayKnob,    widthKnob,   phaserKnob,   flangerKnob;
-    juce::Label  reverbLabel,  chorusLabel,  delayLabel,   widthLabel,  phaserLabel,  flangerLabel;
+
+    // ── Knobs: row 2 — OUTPUT + FX (9 knobs) ─────────────────────────────
+    juce::Slider volumeKnob,  sagKnob,   tremKnob;
+    juce::Label  volumeLabel, sagLabel,  tremLabel;
+    juce::Slider reverbKnob,  chorusKnob, delayKnob, widthKnob, phaserKnob, flangerKnob;
+    juce::Label  reverbLabel, chorusLabel,delayLabel, widthLabel,phaserLabel,flangerLabel;
 
     // ── IR ───────────────────────────────────────────────────────────────
     juce::TextButton irLoadBtn  { "LOAD IR" };
@@ -129,7 +132,7 @@ private:
     juce::Label      irNameLabel;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
-    // ── Header buttons ───────────────────────────────────────────────────
+    // ── Header / top-bar buttons ─────────────────────────────────────────
     juce::TextButton audioBtn      { "AUDIO" };
     juce::TextButton tunerBtn      { "TUNER" };
     juce::TextButton savePresetBtn { "SAVE"  };
@@ -142,35 +145,31 @@ private:
     juce::TextButton cabOpen { "OPEN" };
     AmpProcessor::CabType currentCabType = AmpProcessor::CabType::V30;
 
-    // ── Neural model loader (one per channel) ────────────────────────────
-    juce::TextButton neuralLoadBtn  { "NEURAL" };   // load model for current channel
-    juce::TextButton neuralClearBtn { "✕"      };   // clear current channel's model
-    juce::Label      neuralNameLabel;               // shows loaded model filename
-    void openNeuralModelChooser();
-    void updateNeuralLabel();
+    // ── Per-channel neural model slots ───────────────────────────────────
+    std::unique_ptr<NeuralSlotWidget> neuralSlotClean;
+    std::unique_ptr<NeuralSlotWidget> neuralSlotCrunch;
+    std::unique_ptr<NeuralSlotWidget> neuralSlotLead;
 
     // ── Tap tempo + delay subdivisions ───────────────────────────────────
-    juce::TextButton tapBtn    { "TAP" };
-    juce::TextButton subdivQ   { "1/4" };
-    juce::TextButton subdivD8  { "d1/8" };
-    juce::TextButton subdiv8   { "1/8" };
+    juce::TextButton tapBtn   { "TAP"  };
+    juce::TextButton subdivQ  { "1/4"  };
+    juce::TextButton subdivD8 { "d1/8" };
+    juce::TextButton subdiv8  { "1/8"  };
     juce::Label      bpmLabel;
-    juce::int64      tapHistory[4] { 0, 0, 0, 0 };
-    int              tapHistoryIdx  = 0;
-    float            currentDelayMs = 350.0f;
-    float            currentSubdivMult = 1.0f;  // 1.0=quarter, 0.75=dot-8, 0.5=eighth
+    juce::int64      tapHistory[4]     { 0, 0, 0, 0 };
+    int              tapHistoryIdx     = 0;
+    float            currentDelayMs   = 350.0f;
+    float            currentSubdivMult = 1.0f;
 
-    // ── Tuner overlay ────────────────────────────────────────────────────
+    // ── Tuner overlay ─────────────────────────────────────────────────────
     TunerComponent tuner { processor };
 
-    // ── Post-amp EQ panel ────────────────────────────────────────────────
+    // ── Post-amp EQ panel ─────────────────────────────────────────────────
     EqPanel eqPanel { processor };
 
-    // ── Meters + gate/comp widget ────────────────────────────────────────
+    // ── Meters + gate/comp widget ─────────────────────────────────────────
     LevelMeter inputMeter  { processor, LevelMeter::Source::Input  };
     LevelMeter outputMeter { processor, LevelMeter::Source::Output };
-    // Gate LED + Comp GR meter — declared after the class body
-    // (GateCompWidget is defined in MainComponent.cpp)
     std::unique_ptr<juce::Component> gateCompWidget;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)

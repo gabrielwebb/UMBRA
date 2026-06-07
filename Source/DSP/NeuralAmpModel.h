@@ -71,27 +71,37 @@ public:
                 return false;
             }
 
+            // GuitarML/NeuralPi store a skip connection flag: out = net(x) + x
+            bool skip = true;
+            if (fullJson.contains("model_data"))
+                skip = fullJson.at("model_data").value("skip", 1) != 0;
+
+            // GuitarML weights live in "state_dict" (PyTorch naming). If absent,
+            // the JSON itself is the state dict (some exporters do this).
+            const nlohmann::json& sd = fullJson.contains("state_dict")
+                                     ? fullJson.at("state_dict") : fullJson;
+
             // ── Load weights into matching compile-time model ──────────────
             bool ok = false;
             {
                 juce::ScopedLock sl(lock);
-                // Pass the FULL json object — RTNeural reads "state_dict" from it
                 switch (hidden)
                 {
-                    case  8:  ok = tryLoad(model8,  fullJson); activeSize =  8;  break;
-                    case 16:  ok = tryLoad(model16, fullJson); activeSize = 16;  break;
-                    case 20:  ok = tryLoad(model20, fullJson); activeSize = 20;  break;
-                    case 24:  ok = tryLoad(model24, fullJson); activeSize = 24;  break;
-                    case 32:  ok = tryLoad(model32, fullJson); activeSize = 32;  break;
-                    case 40:  ok = tryLoad(model40, fullJson); activeSize = 40;  break;
+                    case  8:  ok = tryLoad(model8,  sd); activeSize =  8;  break;
+                    case 16:  ok = tryLoad(model16, sd); activeSize = 16;  break;
+                    case 20:  ok = tryLoad(model20, sd); activeSize = 20;  break;
+                    case 24:  ok = tryLoad(model24, sd); activeSize = 24;  break;
+                    case 32:  ok = tryLoad(model32, sd); activeSize = 32;  break;
+                    case 40:  ok = tryLoad(model40, sd); activeSize = 40;  break;
                     default:
                         DBG("NeuralAmpModel: unsupported hidden_size " << hidden);
                         return false;
                 }
-                if (ok) name = file.getFileNameWithoutExtension();
+                if (ok) { name = file.getFileNameWithoutExtension(); skipConn = skip; }
             }
             loaded.store(ok);
-            if (!ok) DBG("NeuralAmpModel: parseJson failed for " << file.getFileName());
+            if (ok) DBG("✓ NeuralAmpModel: loaded " << file.getFileName() << " (h=" << hidden << ")");
+            else    DBG("✗ NeuralAmpModel: parseJson failed for " << file.getFileName());
             return ok;
         }
         catch (const std::exception& e) { DBG("NeuralAmpModel load error: " << e.what()); }
@@ -131,15 +141,16 @@ public:
 #ifdef UMBRA_HAS_RTNEURAL
         if (!loaded.load(std::memory_order_relaxed)) return x;
         float in[1] = { x };
+        const float skip = skipConn ? x : 0.f;
         // No lock: swap happens off audio thread; worst case = 1 block of stale model
         switch (activeSize)
         {
-            case  8: model8 .forward(in); return model8 .getOutputs()[0];
-            case 16: model16.forward(in); return model16.getOutputs()[0];
-            case 20: model20.forward(in); return model20.getOutputs()[0];
-            case 24: model24.forward(in); return model24.getOutputs()[0];
-            case 32: model32.forward(in); return model32.getOutputs()[0];
-            case 40: model40.forward(in); return model40.getOutputs()[0];
+            case  8: model8 .forward(in); return model8 .getOutputs()[0] + skip;
+            case 16: model16.forward(in); return model16.getOutputs()[0] + skip;
+            case 20: model20.forward(in); return model20.getOutputs()[0] + skip;
+            case 24: model24.forward(in); return model24.getOutputs()[0] + skip;
+            case 32: model32.forward(in); return model32.getOutputs()[0] + skip;
+            case 40: model40.forward(in); return model40.getOutputs()[0] + skip;
             default: break;
         }
 #endif
@@ -157,11 +168,19 @@ private:
     RTNeural::ModelT<float,1,1, RTNeural::LSTMLayerT<float,1,32>, RTNeural::DenseT<float,32,1>> model32;
     RTNeural::ModelT<float,1,1, RTNeural::LSTMLayerT<float,1,40>, RTNeural::DenseT<float,40,1>> model40;
 
+    // Load a GuitarML/NeuralPi PyTorch state_dict into the LSTM (layer 0) and
+    // Dense (layer 1) of a ModelT. Prefixes "rec." / "lin." match GuitarML.
     template<typename M>
-    static bool tryLoad(M& model, const nlohmann::json& json)
+    static bool tryLoad(M& model, const nlohmann::json& stateDict)
     {
-        try { model.parseJson(json, false); model.reset(); return true; }
-        catch (const std::exception& e) { DBG("parseJson: " << e.what()); return false; }
+        try
+        {
+            RTNeural::torch_helpers::loadLSTM<float>(stateDict, "rec.", model.template get<0>());
+            RTNeural::torch_helpers::loadDense<float>(stateDict, "lin.", model.template get<1>());
+            model.reset();
+            return true;
+        }
+        catch (const std::exception& e) { DBG("loadLSTM/Dense: " << e.what()); return false; }
         catch (...) { return false; }
     }
 
@@ -186,6 +205,7 @@ private:
     mutable juce::CriticalSection lock;
     juce::String  name;
     int           activeSize = 0;
+    bool          skipConn   = true;   // GuitarML skip connection (out += in)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NeuralAmpModel)
 };

@@ -555,18 +555,22 @@ void AmpProcessor::process(juce::AudioBuffer<float>& buffer)
             // Neural model replaces the hand-coded waveshaper chain when loaded.
             // It runs at the oversampled rate (same as waveshapers) so aliasing
             // from its nonlinearity is equally suppressed by the 8× decimation filter.
+            // GuitarML captures bake in the amp's own gain; the GAIN knob acts as
+            // an input drive (±1 octave around unity) like a guitar volume knob.
+            // gain 0.0 → ×0.5, 0.5 → ×1.0, 1.0 → ×2.0
+            const float nnDrive = std::pow(4.0f, params.gain - 0.5f);
             switch (params.channel)
             {
                 case Channel::Clean:
-                    x = neuralClean.isLoaded()  ? neuralClean .process(x * 0.5f) * 2.f
+                    x = neuralClean.isLoaded()  ? neuralClean .process(x * nnDrive)
                                                 : processCleanSample(x);
                     break;
                 case Channel::Crunch:
-                    x = neuralCrunch.isLoaded() ? neuralCrunch.process(x * 0.5f) * 2.f
+                    x = neuralCrunch.isLoaded() ? neuralCrunch.process(x * nnDrive)
                                                 : processCrunchSample(x);
                     break;
                 case Channel::Lead:
-                    x = neuralLead.isLoaded()   ? neuralLead  .process(x * 0.5f) * 2.f
+                    x = neuralLead.isLoaded()   ? neuralLead  .process(x * nnDrive)
                                                 : processLeadSample(x);
                     break;
             }

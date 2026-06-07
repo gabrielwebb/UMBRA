@@ -122,6 +122,102 @@ private:
     float compGR   = 0.f;
 };
 
+// ── NeuralSlotWidget ───────────────────────────────────────────────────────
+// A clickable card in the AMP MODEL row showing per-channel neural capture status.
+
+class NeuralSlotWidget : public juce::Component
+{
+public:
+    NeuralSlotWidget(const juce::String& ch, std::function<void()> onLoad,
+                     std::function<void()> onClear)
+        : channelName(ch), onLoadFn(onLoad), onClearFn(onClear)
+    {
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        // Small "×" clear button overlay, top-right corner
+        clearBtn.setButtonText("×");
+        clearBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0x00000000));
+        clearBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff555250));
+        clearBtn.onClick = [this] { if (onClearFn) onClearFn(); };
+        addChildComponent(clearBtn);
+    }
+
+    void setModelName(const juce::String& name)
+    {
+        modelName = name;
+        clearBtn.setVisible(name.isNotEmpty());
+        repaint();
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        using namespace UmbraColors;
+        const bool loaded = modelName.isNotEmpty();
+        auto b = getLocalBounds().toFloat().reduced(1.f);
+
+        // Background
+        g.setColour(loaded ? juce::Colour(0xff0a160a) : juce::Colour(0xff111009));
+        g.fillRoundedRectangle(b, 5.f);
+
+        // Border — glows green when loaded
+        g.setColour(loaded ? juce::Colour(0xff2a8a2a).withAlpha(0.8f)
+                           : juce::Colour(0xff262220));
+        g.drawRoundedRectangle(b.reduced(0.5f), 5.f, 1.f);
+
+        // Subtle inner top highlight
+        g.setColour(juce::Colour(loaded ? 0x15449944 : 0x08ffffff));
+        g.fillRoundedRectangle(b.withHeight(b.getHeight() * 0.35f), 5.f);
+
+        // Channel label (small, dim — top-left)
+        g.setFont(juce::Font(juce::FontOptions().withHeight(8.f)));
+        g.setColour(juce::Colour(loaded ? 0xff447744 : 0xff4a4642));
+        g.drawText(channelName,
+                   static_cast<int>(b.getX() + 7), static_cast<int>(b.getY() + 4),
+                   90, 11, juce::Justification::centredLeft, false);
+
+        // Model name (main content — center vertically)
+        if (loaded)
+        {
+            // Truncate to fit
+            const int availW = static_cast<int>(b.getWidth() - 20);
+            g.setFont(juce::Font(juce::FontOptions().withHeight(10.f).withStyle("Bold")));
+            g.setColour(juce::Colour(0xff88ee88));
+            g.drawText(modelName,
+                       static_cast<int>(b.getX() + 7),
+                       static_cast<int>(b.getCentreY()),
+                       availW, 14, juce::Justification::centredLeft, false);
+        }
+        else
+        {
+            g.setFont(juce::Font(juce::FontOptions().withHeight(9.5f)));
+            g.setColour(juce::Colour(0xff2e2c2a));
+            g.drawText("click to load a capture",
+                       static_cast<int>(b.getX() + 7),
+                       static_cast<int>(b.getCentreY() - 1),
+                       static_cast<int>(b.getWidth() - 14), 14,
+                       juce::Justification::centredLeft, false);
+        }
+
+        // Status LED — top-right
+        const juce::Colour ledCol = loaded ? juce::Colour(0xff44dd44) : juce::Colour(0xff282420);
+        if (loaded) { g.setColour(ledCol.withAlpha(0.3f)); g.fillEllipse(b.getRight()-13.f, b.getY()+5.f, 8.f, 8.f); }
+        g.setColour(ledCol);
+        g.fillEllipse(b.getRight()-12.f, b.getY()+6.f, 6.f, 6.f);
+    }
+
+    void resized() override
+    {
+        // ×  button: 16×16, top-right inside the card
+        clearBtn.setBounds(getWidth() - 18, 2, 16, 16);
+    }
+
+    void mouseDown(const juce::MouseEvent&) override { if (onLoadFn) onLoadFn(); }
+
+private:
+    juce::String channelName, modelName;
+    std::function<void()> onLoadFn, onClearFn;
+    juce::TextButton clearBtn;
+};
+
 // ── TunerComponent ─────────────────────────────────────────────────────────
 
 TunerComponent::TunerComponent(AmpProcessor& p) : proc(p)
@@ -431,20 +527,21 @@ MainComponent::MainComponent()
     addAndMakeVisible(inputMeter);
     addAndMakeVisible(outputMeter);
 
-    // ── Neural model loader ──
-    neuralLoadBtn.addListener(this);
-    neuralLoadBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
-    addAndMakeVisible(neuralLoadBtn);
-
-    neuralClearBtn.addListener(this);
-    neuralClearBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a1a));
-    addAndMakeVisible(neuralClearBtn);
-
-    neuralNameLabel.setText("No neural model", juce::dontSendNotification);
-    neuralNameLabel.setJustificationType(juce::Justification::centredLeft);
-    neuralNameLabel.setColour(juce::Label::textColourId, juce::Colour(0xff555250));
-    neuralNameLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-    addAndMakeVisible(neuralNameLabel);
+    // ── Per-channel neural model slots ──
+    using Ch = AmpProcessor::Channel;
+    auto makeSlot = [this](const juce::String& name, Ch ch) {
+        return std::make_unique<NeuralSlotWidget>(
+            name,
+            [this, ch] { openNeuralModelChooser(ch); },
+            [this, ch] { processor.clearNeuralModel(ch); updateAllNeuralSlots(); }
+        );
+    };
+    neuralSlotClean  = makeSlot("CLEAN",  Ch::Clean);
+    neuralSlotCrunch = makeSlot("CRUNCH", Ch::Crunch);
+    neuralSlotLead   = makeSlot("LEAD",   Ch::Lead);
+    addAndMakeVisible(*neuralSlotClean);
+    addAndMakeVisible(*neuralSlotCrunch);
+    addAndMakeVisible(*neuralSlotLead);
 
     // ── EQ panel ──
     eqPanel.onEqChanged = [this] { syncParams(); };
@@ -458,7 +555,7 @@ MainComponent::MainComponent()
     applyPreset(kPresets[3]);   // HYBRID
 
     setAudioChannels(2, 2);
-    setSize(960, 534);
+    setSize(1060, 620);
 }
 
 MainComponent::~MainComponent()
@@ -610,9 +707,9 @@ void MainComponent::sliderDragEnded(juce::Slider* s)
 void MainComponent::buttonClicked(juce::Button* btn)
 {
     // Channel
-    if (btn == &chClean)  { currentChannel = AmpProcessor::Channel::Clean;  currentPresetIdx = -1; updatePresetButtonStates(); updateChannelButtonStates(); updateNeuralLabel(); syncParams(); return; }
-    if (btn == &chCrunch) { currentChannel = AmpProcessor::Channel::Crunch; currentPresetIdx = -1; updatePresetButtonStates(); updateChannelButtonStates(); updateNeuralLabel(); syncParams(); return; }
-    if (btn == &chLead)   { currentChannel = AmpProcessor::Channel::Lead;   currentPresetIdx = -1; updatePresetButtonStates(); updateChannelButtonStates(); updateNeuralLabel(); syncParams(); return; }
+    if (btn == &chClean)  { currentChannel = AmpProcessor::Channel::Clean;  currentPresetIdx = -1; updatePresetButtonStates(); updateChannelButtonStates(); syncParams(); return; }
+    if (btn == &chCrunch) { currentChannel = AmpProcessor::Channel::Crunch; currentPresetIdx = -1; updatePresetButtonStates(); updateChannelButtonStates(); syncParams(); return; }
+    if (btn == &chLead)   { currentChannel = AmpProcessor::Channel::Lead;   currentPresetIdx = -1; updatePresetButtonStates(); updateChannelButtonStates(); syncParams(); return; }
     if (btn == &boostBtn) { currentPresetIdx = -1; updatePresetButtonStates(); syncParams(); return; }
 
     // Presets
@@ -623,14 +720,6 @@ void MainComponent::buttonClicked(juce::Button* btn)
     if (btn == &preHotMul)   { applyPreset(kPresets[4]); return; }
 
     // IR
-    // Neural model loading (applies to the currently-selected channel)
-    if (btn == &neuralLoadBtn)  { openNeuralModelChooser(); return; }
-    if (btn == &neuralClearBtn) {
-        processor.clearNeuralModel(currentChannel);
-        updateNeuralLabel();
-        return;
-    }
-
     if (btn == &irLoadBtn)  { openIRChooser(); return; }
     if (btn == &irClearBtn) {
         processor.clearIR();
@@ -769,6 +858,7 @@ void MainComponent::applyPreset(const Preset& p)
     const int bpm = static_cast<int>(std::round(60000.0f / currentDelayMs));
     bpmLabel.setText(juce::String(bpm) + " BPM", juce::dontSendNotification);
 
+    updateAllNeuralSlots();
     syncParams();
     repaint();
 }
@@ -845,54 +935,50 @@ void MainComponent::openIRChooser()
 
 // ── Neural model ───────────────────────────────────────────────────────────
 
-void MainComponent::updateNeuralLabel()
+void MainComponent::updateAllNeuralSlots()
 {
-    const auto name = processor.getNeuralModelName(currentChannel);
-    if (name.isEmpty())
-    {
-        neuralNameLabel.setText("No neural model", juce::dontSendNotification);
-        neuralNameLabel.setColour(juce::Label::textColourId, juce::Colour(0xff555250));
-    }
-    else
-    {
-        neuralNameLabel.setText(name, juce::dontSendNotification);
-        neuralNameLabel.setColour(juce::Label::textColourId, juce::Colour(0xff88ee88));
-    }
+    using Ch = AmpProcessor::Channel;
+    auto update = [this](NeuralSlotWidget* slot, Ch ch) {
+        if (!slot) return;
+        const auto name = processor.getNeuralModelName(ch);
+        slot->setModelName(name);
+    };
+    update(neuralSlotClean .get(), Ch::Clean);
+    update(neuralSlotCrunch.get(), Ch::Crunch);
+    update(neuralSlotLead  .get(), Ch::Lead);
 }
 
-void MainComponent::openNeuralModelChooser()
+void MainComponent::openNeuralModelChooser(AmpProcessor::Channel ch)
 {
     const auto modelsDir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
                                .getChildFile("UMBRA Models");
     modelsDir.createDirectory();
 
     fileChooser = std::make_unique<juce::FileChooser>(
-        "Load Neural Amp Model (LSTM .json)",
+        "Load Neural Amp Model (.json — GuitarML / NeuralPi / Proteus)",
         modelsDir.exists() ? modelsDir : juce::File::getSpecialLocation(juce::File::userHomeDirectory),
         "*.json");
 
     fileChooser->launchAsync(
         juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-        [this](const juce::FileChooser& fc)
+        [this, ch](const juce::FileChooser& fc)
         {
             const auto results = fc.getResults();
             if (results.isEmpty()) return;
 
-            // Loading can be slow for large models — run on background thread
-            const auto file   = results[0];
-            const auto ch     = currentChannel;
+            const auto file = results[0];
             juce::Thread::launch([this, file, ch]
             {
                 const bool ok = processor.loadNeuralModel(file, ch);
-                juce::MessageManager::callAsync([this, ok, ch]
+                juce::MessageManager::callAsync([this, ok]
                 {
-                    if (ok && ch == currentChannel)
-                        updateNeuralLabel();
-                    else if (!ok)
+                    if (ok) updateAllNeuralSlots();
+                    else
                         juce::AlertWindow::showMessageBoxAsync(
                             juce::AlertWindow::WarningIcon, "Neural Model",
                             "Could not load this model.\n"
-                            "Supported: LSTM hidden_size 8/16/20/24/32/40 (GuitarML / NeuralPi / Proteus format).");
+                            "Supported: LSTM hidden_size 8/16/20/24/32/40\n"
+                            "(GuitarML / NeuralPi / Proteus format).");
                 });
             });
         });
@@ -1036,92 +1122,86 @@ void MainComponent::paint(juce::Graphics& g)
     const int W = getWidth();
     const int H = getHeight();
 
-    // Background
     g.fillAll(juce::Colour(0xff0d0b09));
 
-    // Header gradient
+    // ── Header (y=0, h=50) ──────────────────────────────────────────────
     {
-        juce::ColourGradient hg(juce::Colour(0xff201e1c), 0.0f, 0.0f,
-                                juce::Colour(0xff0e0c0b), 0.0f, 48.0f, false);
+        juce::ColourGradient hg(juce::Colour(0xff201e1c), 0.f, 0.f,
+                                juce::Colour(0xff0e0c0b), 0.f, 50.f, false);
         g.setGradientFill(hg);
-        g.fillRect(0, 0, W, 48);
+        g.fillRect(0, 0, W, 50);
     }
     g.setColour(kAccent);
-    g.fillRect(0.0f, 46.0f, (float)W, 2.0f);
+    g.fillRect(0.f, 48.f, static_cast<float>(W), 2.f);
 
     // UMBRA wordmark
-    g.setFont(juce::Font(juce::FontOptions().withHeight(26.0f).withStyle("Bold")));
+    g.setFont(juce::Font(juce::FontOptions().withHeight(26.f).withStyle("Bold")));
     g.setColour(kAccentHi);
-    g.drawText("U", 18, 0, 18, 46, juce::Justification::centredLeft, false);
+    g.drawText("U", 18, 0, 18, 50, juce::Justification::centredLeft, false);
     g.setColour(juce::Colour(0xfff0eee8));
-    g.drawText("MBRA", 34, 0, 76, 46, juce::Justification::centredLeft, false);
+    g.drawText("MBRA", 34, 0, 76, 50, juce::Justification::centredLeft, false);
     g.setFont(juce::Font(juce::FontOptions().withHeight(8.5f)));
     g.setColour(juce::Colour(0xff504844));
-    g.drawText("AMP SIMULATOR", 18, 32, 120, 13, juce::Justification::centredLeft, false);
+    g.drawText("AMP SIMULATOR", 18, 34, 120, 13, juce::Justification::centredLeft, false);
 
-    // Preset row
+    // ── Preset + IR row (y=50, h=38) ─────────────────────────────────────
     g.setColour(juce::Colour(0xff0e0c0b));
-    g.fillRect(0, 48, W, 38);
+    g.fillRect(0, 50, W, 38);
     g.setColour(juce::Colour(0xff282420));
-    g.fillRect(0, 85, W, 1);
+    g.fillRect(0, 87, W, 1);
 
-    // Knob panel
-    const auto panelBounds = juce::Rectangle<int>(8, 92, W - 16, H - 100).toFloat();
-    g.setColour(kPanel);
-    g.fillRoundedRectangle(panelBounds, 6.0f);
-    g.setColour(juce::Colour(0xff242220));
-    g.drawLine(panelBounds.getX() + 6, panelBounds.getY() + 1,
-               panelBounds.getRight() - 6, panelBounds.getY() + 1, 1.0f);
+    // ── AMP MODEL row background (y=88, h=44) ────────────────────────────
+    g.setColour(juce::Colour(0xff0a0908));
+    g.fillRect(8, 88, W - 16, 44);
     g.setColour(juce::Colour(0xff2a2724));
-    g.drawRoundedRectangle(panelBounds, 6.0f, 1.0f);
+    g.drawRect(8, 88, W - 16, 44, 1);
 
-    // Section labels + separators
-    // Layout mirrors resized(): input meter 22px + 4px gap on left,
-    // output meter 24px + 14px gap on right, 14 equal-width knob slots in between.
+    // AMP MODEL label
+    g.setFont(juce::Font(juce::FontOptions().withHeight(9.f).withStyle("Bold")));
+    g.setColour(juce::Colour(0xff3a3632));
+    g.drawText("AMP MODEL", 16, 92, 100, 12, juce::Justification::centredLeft, false);
+
+    // CABINET label
+    g.drawText("CABINET", W - 150, 92, 100, 12, juce::Justification::centredRight, false);
+
+    // ── Knob panel (y=132 downward) ─────────────────────────────────────
+    const int knobPanelTop = 132;
+    const int knobPanelH   = H - knobPanelTop - 6;
+    const auto panelBounds = juce::Rectangle<int>(8, knobPanelTop, W - 16, knobPanelH).toFloat();
+    g.setColour(kPanel);
+    g.fillRoundedRectangle(panelBounds, 6.f);
+    g.setColour(juce::Colour(0xff2a2724));
+    g.drawRoundedRectangle(panelBounds.reduced(0.5f), 6.f, 1.f);
+
+    // Section labels for knob rows
     {
-        constexpr int kInMW    = 22;
-        constexpr int kInMGap  = 4;
-        constexpr int kOutMW   = 24;
-        constexpr int kOutMGap = 14;
-        // Input meter starts at x=12 (4px inside panel at x=8)
-        const int kAreaLeft  = 12 + kInMW + kInMGap;       // 38 — must match resized()
-        const int kAreaRight = W - kOutMW - kOutMGap;       // W - 38
-        const int kAreaW     = kAreaRight - kAreaLeft;
-        const int numKnobs   = 17;
-        const int slotW      = kAreaW / numKnobs;
-        const int panelTop   = 92;
-        const int panelH     = H - 100;
+        constexpr int kInMW = 22, kInMGap = 4, kOutMW = 24, kOutMGap = 14;
+        const int kAreaLeft = 12 + kInMW + kInMGap;
+        const int kAreaRight = W - kOutMW - kOutMGap;
+        const int kAreaW = kAreaRight - kAreaLeft;
+        const int slotW = kAreaW / 17;
 
-        // Sections: INPUT(0-3), TONE(4-7), OUTPUT(8-10), FX(11-16)
         struct Sec { int start, count; const char* name; } secs[] = {
             { 0, 4, "INPUT" }, { 4, 4, "TONE" }, { 8, 3, "OUTPUT" }, { 11, 6, "FX" }
         };
-
         g.setFont(juce::Font(juce::FontOptions().withHeight(8.5f)));
-
         for (auto& s : secs)
         {
             const int sx = kAreaLeft + s.start * slotW;
             const int sw = s.count * slotW;
-
             g.setColour(juce::Colour(0xff484240));
-            g.drawText(s.name, sx, panelTop + 6, sw, 13, juce::Justification::centred, false);
+            g.drawText(s.name, sx, knobPanelTop + 8, sw, 12, juce::Justification::centred, false);
 
-            if (s.start + s.count < numKnobs)
+            if (s.start + s.count < 17)
             {
                 const int sepX = kAreaLeft + (s.start + s.count) * slotW;
                 g.setColour(juce::Colour(0xff0a0908));
-                g.fillRect(sepX - 1, panelTop + 20, 2, panelH - 26);
+                g.fillRect(sepX - 1, knobPanelTop + 22, 2, knobPanelH - 28);
                 g.setColour(juce::Colour(0xff222220));
-                g.fillRect(sepX, panelTop + 20, 1, panelH - 26);
+                g.fillRect(sepX, knobPanelTop + 22, 1, knobPanelH - 28);
             }
         }
     }
-
-    // "CHANNEL" micro-label
-    g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
-    g.setColour(juce::Colour(0xff3a3632));
-    g.drawText("CHANNEL", 178, 1, 230, 10, juce::Justification::centred, false);
 }
 
 // ── Resized ────────────────────────────────────────────────────────────────
@@ -1131,12 +1211,10 @@ void MainComponent::resized()
     const int W = getWidth();
     const int H = getHeight();
 
-    // ── Header (y=0, h=48) ──────────────────────────────────────────────
-    // SAVE / LOAD preset — left of channel buttons
+    // ── Header (y=0, h=50) ──────────────────────────────────────────────
     savePresetBtn.setBounds(112, 12, 42, 24);
     loadPresetBtn.setBounds(156, 12, 42, 24);
 
-    // Channel buttons
     const int chW = 68, chH = 26, chY = 11;
     const int chStart = 206;
     chClean .setBounds(chStart,            chY, chW, chH);
@@ -1144,29 +1222,10 @@ void MainComponent::resized()
     chLead  .setBounds(chStart + chW*2+8,  chY, chW, chH);
     boostBtn.setBounds(chStart + chW*3+16, chY, 46,  chH);
 
-    // Neural model loader — right after 808 button, compact
-    {
-        const int nX = chStart + chW*3 + 16 + 46 + 8;
-        neuralLoadBtn .setBounds(nX,      11, 62, 26);
-        neuralClearBtn.setBounds(nX + 65, 11, 22, 26);
-        neuralNameLabel.setBounds(nX + 90, 11, 160, 26);
-    }
-
-    // Cab character buttons — positioned after neural loader
-    {
-        const int cabStart = chStart + chW*3 + 16 + 46 + 270;
-        const int cW = 40, cH = 22, cY = 13;
-        cabV30 .setBounds(cabStart,           cY, cW,   cH);
-        cabG12 .setBounds(cabStart + cW + 3,  cY, cW,   cH);
-        cabGrbn.setBounds(cabStart + cW*2+6,  cY, cW+2, cH);
-        cabOpen.setBounds(cabStart + cW*3+12, cY, cW,   cH);
-    }
-
-    // TUNER + AUDIO — right of header
     audioBtn .setBounds(W - 70, 11, 60, 26);
     tunerBtn .setBounds(W - 70 - 62, 11, 58, 26);
 
-    // ── Preset / IR row (y=48, h=38) ────────────────────────────────────
+    // ── Preset / IR row (y=50, h=38) ────────────────────────────────────
     const int rowY = 50, rowH = 30;
     const int pW = 80, pGap = 3;
     preDeftones.setBounds(8,                   rowY, pW, rowH);
@@ -1175,32 +1234,43 @@ void MainComponent::resized()
     preHybrid  .setBounds(8 + (pW+pGap)*3,     rowY, pW, rowH);
     preHotMul  .setBounds(8 + (pW+pGap)*4,     rowY, pW, rowH);
 
-    // TAP tempo + subdivision buttons — after presets
     const int afterPresets = 8 + (pW+pGap)*5 + 4;
     tapBtn  .setBounds(afterPresets,       rowY, 40, rowH);
-    // Subdivision note-value buttons (small)
     const int sdY = rowY + 4, sdH = rowH - 8;
     subdivQ .setBounds(afterPresets + 44,      sdY, 34, sdH);
     subdivD8.setBounds(afterPresets + 44 + 37, sdY, 38, sdH);
     subdiv8 .setBounds(afterPresets + 44 + 79, sdY, 34, sdH);
     bpmLabel.setBounds(afterPresets + 44 + 116, rowY, 62, rowH);
 
-    // IR — right-aligned
     const int irClearW = 26, irLoadW = 72;
     const int irRight  = W - 10;
     irClearBtn .setBounds(irRight - irClearW,               rowY, irClearW, rowH);
     irLoadBtn  .setBounds(irRight - irClearW - irLoadW - 4, rowY, irLoadW,  rowH);
-    // IR name label: starts after BPM readout, ends before LOAD IR button
     const int irLabelX = afterPresets + 44 + 116 + 64;
     irNameLabel.setBounds(irLabelX, rowY,
                           irRight - irClearW - irLoadW - 4 - irLabelX - 6, rowH);
 
-    // ── Knob + meter area (y=92 downward) ───────────────────────────────
-    const int panelTop  = 92;
-    const int panelH    = H - panelTop - 8;
+    // ── AMP MODEL row (y=88, h=44) ──────────────────────────────────────
+    const int modelRowY = 88, modelRowH = 44;
+    // Neural slot cards: 3 equal-width slots on the left, cab buttons on the right
+    const int slotW = 160, slotH = 34, slotX0 = 16, slotY = modelRowY + 5;
+    neuralSlotClean ->setBounds(slotX0,              slotY, slotW, slotH);
+    neuralSlotCrunch->setBounds(slotX0 + slotW + 8, slotY, slotW, slotH);
+    neuralSlotLead  ->setBounds(slotX0 + (slotW+8)*2,slotY, slotW, slotH);
+
+    // Cabinet buttons on the right
+    const int cabStart = W - 10 - (40+3) * 4;
+    const int cW = 40, cH = 22, cY = modelRowY + 11;
+    cabV30 .setBounds(cabStart,           cY, cW,   cH);
+    cabG12 .setBounds(cabStart + cW + 3,  cY, cW,   cH);
+    cabGrbn.setBounds(cabStart + cW*2+6,  cY, cW+2, cH);
+    cabOpen.setBounds(cabStart + cW*3+12, cY, cW,   cH);
+
+    // ── Knob panel (y=132 downward) ──────────────────────────────────────
+    const int panelTop  = 132;
+    const int panelH    = H - panelTop - 6;
     const int secLabelH = 22;
 
-    // Meters: IN on left, OUT on right
     constexpr int kInMW   = 22;
     constexpr int kInMGap = 4;
     constexpr int kOutMW  = 24;
@@ -1209,45 +1279,37 @@ void MainComponent::resized()
     const int outMeterX = W - kOutMW - kOutMGap;
     inputMeter .setBounds(inMeterX,  panelTop + 8, kInMW,  panelH - 14);
     outputMeter.setBounds(outMeterX, panelTop + 8, kOutMW, panelH - 14);
-    // Gate/Comp widget: 18px wide, to the left of the first knob
     if (gateCompWidget)
         gateCompWidget->setBounds(inMeterX + kInMW + 2, panelTop + 8, 16, panelH - 14);
 
-    // Tuner overlay — covers entire knob panel
     tuner.setBounds(8, panelTop, W - 16, panelH);
 
-    // Knob slots
-    const int kAreaLeft = inMeterX + kInMW + kInMGap;   // 38
+    const int kAreaLeft = inMeterX + kInMW + kInMGap;
     const int kAreaW    = outMeterX - kAreaLeft;
     const int numKnobs  = 17;
-    const int slotW     = kAreaW / numKnobs;
-    const int knobSize  = juce::jmin(panelH - secLabelH - 34, slotW - 6);
+    const int knobSlotW = kAreaW / numKnobs;
+    const int knobSize  = juce::jmin(panelH - secLabelH - 34, knobSlotW - 6);
     const int labelH    = 14;
-    const int knobY     = panelTop + secLabelH
-                          + (panelH - secLabelH - knobSize - labelH) / 2;
+    const int knobY     = panelTop + secLabelH + (panelH - secLabelH - knobSize - labelH) / 2;
 
     auto place = [&](juce::Slider& k, juce::Label& l, int idx)
     {
-        const int kx = kAreaLeft + idx * slotW + (slotW - knobSize) / 2;
+        const int kx = kAreaLeft + idx * knobSlotW + (knobSlotW - knobSize) / 2;
         k.setBounds(kx, knobY, knobSize, knobSize);
         l.setBounds(kx - 4, knobY + knobSize + 2, knobSize + 8, labelH);
     };
 
-    // INPUT: COMP(0) GATE(1) GAIN(2) XPOSE(3)
     place(compKnob,      compLabel,      0);
     place(gateKnob,      gateLabel,      1);
     place(gainKnob,      gainLabel,      2);
     place(transposeKnob, transposeLabel, 3);
-    // TONE: BASS(4) MID(5) TREBLE(6) PRESENCE(7)
     place(bassKnob,      bassLabel,      4);
     place(midKnob,       midLabel,       5);
     place(trebleKnob,    trebleLabel,    6);
     place(presenceKnob,  presenceLabel,  7);
-    // OUTPUT: VOLUME(8) SAG(9) TREM(10)
     place(volumeKnob,    volumeLabel,    8);
     place(sagKnob,       sagLabel,       9);
     place(tremKnob,      tremLabel,      10);
-    // FX: REVERB(11) CHORUS(12) DELAY(13) WIDTH(14) PHASE(15) FLANGE(16)
     place(reverbKnob,    reverbLabel,    11);
     place(chorusKnob,    chorusLabel,    12);
     place(delayKnob,     delayLabel,     13);
@@ -1255,7 +1317,7 @@ void MainComponent::resized()
     place(phaserKnob,    phaserLabel,    15);
     place(flangerKnob,   flangerLabel,   16);
 
-    // ── EQ panel (below knob panel, fixed height 170px) ──────────────────
+    // ── EQ panel ──────────────────────────────────────────────────────────
     const int eqTop = panelTop + panelH + 8;
     const int eqH   = H - eqTop - 6;
     eqPanel.setBounds(8, eqTop, W - 16, std::max(10, eqH));
