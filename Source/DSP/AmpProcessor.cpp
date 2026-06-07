@@ -78,10 +78,9 @@ void AmpProcessor::prepare(double sr, int blockSize)
     flangerLfoPhase = 0.f;
 
     // ── Timing coefficients ────────────────────────────────────────────────
+    // (gate coeffs are computed in updateFilters — they depend on neural mode)
     const float osr_f = static_cast<float>(sr) * 8.0f;
     const float sr_f  = static_cast<float>(sr);
-    gateAttCoeff  = 1.f - std::exp(-1.f / (0.0003f * osr_f));
-    gateRelCoeff  = std::exp(-1.f         / (0.020f  * osr_f));
     powerAttCoeff = 1.f - std::exp(-1.f / (0.008f  * osr_f));
     powerRelCoeff = std::exp(-1.f         / (0.200f  * osr_f));
     sagAttCoeff   = 1.f - std::exp(-1.f / (0.002f  * sr_f));
@@ -115,13 +114,37 @@ void AmpProcessor::setParams(const Params& p)
     if (channelChanged) resetFilterStates();
 }
 
+// ── neuralActiveNow ──────────────────────────────────────────────────────────
+
+bool AmpProcessor::neuralActiveNow() const noexcept
+{
+    switch (params.channel)
+    {
+        case Channel::Clean:  return neuralClean .isLoaded();
+        case Channel::Crunch: return neuralCrunch.isLoaded();
+        case Channel::Lead:   return neuralLead  .isLoaded();
+    }
+    return false;
+}
+
 // ── updateFilters ──────────────────────────────────────────────────────────
 
 void AmpProcessor::updateFilters()
 {
     const float  g   = params.gain;
-    const double osr = sampleRate * 8.0;
     const double sr  = sampleRate;
+    // Analog filters run inside the 8× oversampled loop for the waveshaper
+    // path, but at BASE rate for the neural path (the LSTM is rate-dependent).
+    // `osr` is therefore the actual rate the pre/tone/cab filters run at.
+    const bool   neural = neuralActiveNow();
+    const double osr = neural ? sr : sr * 8.0;
+
+    // Gate timing — must match the rate the gate actually runs at.
+    {
+        const float r = static_cast<float>(osr);
+        gateAttCoeff = 1.f - std::exp(-1.f / (0.0003f * r));
+        gateRelCoeff = std::exp(-1.f        / (0.020f  * r));
+    }
 
     // Gate sidechain
     gateSidechain.coefficients = Coeffs::makeHighPass(osr, 100.0, 0.707);
@@ -285,6 +308,7 @@ void AmpProcessor::resetFilterStates()
     for (auto& f : postEqL) f.reset();
     for (auto& f : postEqR) f.reset();
 
+    oversampling.reset();   // clear stale state when toggling neural/waveshaper
     neuralClean.reset(); neuralCrunch.reset(); neuralLead.reset();
     gateEnvelope = sagEnvelope = powerEnvelope = compEnvelope = 0.0f;
     lfoPhase     = flangerLfoPhase = 0.0f;
@@ -322,6 +346,9 @@ bool AmpProcessor::loadNeuralModel(const juce::File& file, Channel ch)
         case Channel::Crunch: ok = neuralCrunch.loadFromFile(file); break;
         case Channel::Lead:   ok = neuralLead  .loadFromFile(file); break;
     }
+    // Loading toggles neural mode for this channel → re-rate the analog filters
+    // (base vs 8×) and clear stale state so the switch is click-free.
+    if (ok && ch == params.channel) { updateFilters(); resetFilterStates(); }
     return ok;
 }
 
@@ -333,6 +360,7 @@ void AmpProcessor::clearNeuralModel(Channel ch)
         case Channel::Crunch: neuralCrunch.clear(); break;
         case Channel::Lead:   neuralLead  .clear(); break;
     }
+    if (ch == params.channel) { updateFilters(); resetFilterStates(); }
 }
 
 bool AmpProcessor::hasNeuralModel(Channel ch) const noexcept
@@ -526,20 +554,29 @@ void AmpProcessor::process(juce::AudioBuffer<float>& buffer)
     for (int i = 0; i < numSamples; ++i)
         ch0[i] = applyCompressorSample(ch0[i]);
 
-    // ── Upsample → nonlinear chain → downsample ───────────────────────────
+    // GuitarML captures bake in the amp's own gain; the GAIN knob acts as an
+    // input drive (±1 octave around unity) like a guitar volume knob.
+    // gain 0.0 → ×0.5, 0.5 → ×1.0, 1.0 → ×2.0
+    const float nnDrive = std::pow(4.0f, params.gain - 0.5f);
+
+    if (neuralActiveNow())
     {
-        juce::dsp::AudioBlock<float> inputBlock(buffer);
-        auto monoBlock = inputBlock.getSingleChannelBlock(0);
-        auto upBlock   = oversampling.processSamplesUp(monoBlock);
-
-        const int upSamples = static_cast<int>(upBlock.getNumSamples());
-        float* up = upBlock.getChannelPointer(0);
-
-        for (int i = 0; i < upSamples; ++i)
+        // ── Neural path — BASE RATE (no oversampling) ─────────────────────
+        // An LSTM amp capture is rate-dependent: it was trained at the project
+        // sample rate and its output is already band-limited, so it must run at
+        // base rate (oversampling it shifts every internal time-constant 8× and
+        // produces a thin, fizzy, scratchy tone). The analog filters around it
+        // already have base-rate coefficients (see updateFilters/neuralActiveNow).
+        // The capture also contains a full power amp, so processPowerAmpSample
+        // is skipped — re-saturating it would double-clip.
+        NeuralAmpModel& model = (params.channel == Channel::Clean)  ? neuralClean
+                              : (params.channel == Channel::Crunch) ? neuralCrunch
+                                                                    : neuralLead;
+        const bool noIR = !irLoaded.load();
+        for (int i = 0; i < numSamples; ++i)
         {
-            float x = up[i];
+            float x = ch0[i];
 
-            // Pre-boost (808 / Tube Screamer)
             if (params.boost)
             {
                 x = boostHpf.processSample(x);
@@ -552,27 +589,56 @@ void AmpProcessor::process(juce::AudioBuffer<float>& buffer)
             x = preHpf.processSample(x);
             x = applyGateSample(x);
 
-            // Neural model replaces the hand-coded waveshaper chain when loaded.
-            // It runs at the oversampled rate (same as waveshapers) so aliasing
-            // from its nonlinearity is equally suppressed by the 8× decimation filter.
-            // GuitarML captures bake in the amp's own gain; the GAIN knob acts as
-            // an input drive (±1 octave around unity) like a guitar volume knob.
-            // gain 0.0 → ×0.5, 0.5 → ×1.0, 1.0 → ×2.0
-            const float nnDrive = std::pow(4.0f, params.gain - 0.5f);
+            x = model.process(x * nnDrive);
+
+            x = bassFilter.processSample(x);
+            x = midFilter.processSample(x);
+            x = trebleFilter.processSample(x);
+            x = presenceFilter.processSample(x);
+
+            if (noIR)
+            {
+                x = cabHpf.processSample(x);
+                x = cabLoResonance.processSample(x);
+                x = cabMidScoop.processSample(x);
+                x = cabPresence.processSample(x);
+                x = cabLpf.processSample(x);
+            }
+
+            ch0[i] = softLimit(x);
+        }
+    }
+    else
+    {
+        // ── Waveshaper path — 8× OVERSAMPLED (memoryless nonlinearities) ──
+        juce::dsp::AudioBlock<float> inputBlock(buffer);
+        auto monoBlock = inputBlock.getSingleChannelBlock(0);
+        auto upBlock   = oversampling.processSamplesUp(monoBlock);
+
+        const int upSamples = static_cast<int>(upBlock.getNumSamples());
+        float* up = upBlock.getChannelPointer(0);
+
+        for (int i = 0; i < upSamples; ++i)
+        {
+            float x = up[i];
+
+            if (params.boost)
+            {
+                x = boostHpf.processSample(x);
+                x = boostMid.processSample(x);
+                x = std::tanh(x * boostDrive);
+                x = boostLpf.processSample(x);
+                x *= 0.65f;
+            }
+
+            x = preHpf.processSample(x);
+            x = applyGateSample(x);
+
             switch (params.channel)
             {
-                case Channel::Clean:
-                    x = neuralClean.isLoaded()  ? neuralClean .process(x * nnDrive)
-                                                : processCleanSample(x);
-                    break;
-                case Channel::Crunch:
-                    x = neuralCrunch.isLoaded() ? neuralCrunch.process(x * nnDrive)
-                                                : processCrunchSample(x);
-                    break;
-                case Channel::Lead:
-                    x = neuralLead.isLoaded()   ? neuralLead  .process(x * nnDrive)
-                                                : processLeadSample(x);
-                    break;
+                case Channel::Clean:  x = processCleanSample(x);  break;
+                case Channel::Crunch: x = processCrunchSample(x); break;
+                case Channel::Lead:   x = processLeadSample(x);   break;
             }
 
             x = bassFilter.processSample(x);

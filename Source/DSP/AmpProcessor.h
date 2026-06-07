@@ -142,6 +142,11 @@ private:
     void updateFilters();
     void resetFilterStates();
 
+    // True when the currently-selected channel has a neural capture loaded.
+    // In this mode the amp runs at base rate (the LSTM is rate-dependent and
+    // was trained at the project sample rate — oversampling it breaks its tone).
+    bool neuralActiveNow() const noexcept;
+
     float applyGateSample      (float x) noexcept;
     float applyCompressorSample(float x) noexcept;
     float processCleanSample   (float x) noexcept;
