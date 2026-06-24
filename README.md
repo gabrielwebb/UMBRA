@@ -9,6 +9,8 @@ hand‑built analog‑style amp engine.
 > Built for modern metal and metalcore tones — tight low end, aggressive
 > mids, and a proper noise gate — but it cleans up too.
 
+![UMBRA](docs/screenshot.png)
+
 ---
 
 ## Features
