@@ -275,10 +275,16 @@ void AmpProcessor::updateFilters()
     // Phaser rate/depth driven by params.phaser knob
     phaser.setMix(params.phaser * 0.7f);
 
-    // Gate threshold
+    // Gate threshold.
+    // Neural captures apply huge small-signal gain (~200×+), so noise-floor
+    // leakage through a low threshold gets amplified into constant fuzz. They
+    // need a much more aggressive, usable gate range (-60..-22 dB) keyed on the
+    // clean input. The waveshaper path keeps its original gentle range.
     gateThresh = (params.gate < 0.01f)
                  ? 0.0f
-                 : juce::Decibels::decibelsToGain(-80.0f + params.gate * 36.0f);
+                 : neural
+                     ? juce::Decibels::decibelsToGain(-60.0f + params.gate * 38.0f)
+                     : juce::Decibels::decibelsToGain(-80.0f + params.gate * 36.0f);
 
     // Cached drive values
     cleanDrive = 1.0f + g * 4.5f;
