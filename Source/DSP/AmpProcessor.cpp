@@ -104,6 +104,7 @@ void AmpProcessor::prepare(double sr, int blockSize)
 
 void AmpProcessor::setParams(const Params& p)
 {
+    const juce::ScopedLock sl(processLock);
     const bool channelChanged = (p.channel != params.channel);
     params = p;
     pitchShifter.setSemitones(params.transpose);
@@ -337,6 +338,7 @@ void AmpProcessor::loadIR(const juce::File& file)
 
 void AmpProcessor::clearIR()
 {
+    const juce::ScopedLock sl(processLock);
     irLoaded.store(false);
     convolution.reset();
 }
@@ -353,8 +355,15 @@ bool AmpProcessor::loadNeuralModel(const juce::File& file, Channel ch)
         case Channel::Lead:   ok = neuralLead  .loadFromFile(file); break;
     }
     // Loading toggles neural mode for this channel → re-rate the analog filters
-    // (base vs 8×) and clear stale state so the switch is click-free.
-    if (ok && ch == params.channel) { updateFilters(); resetFilterStates(); }
+    // (base vs 8×) and clear stale state so the switch is click-free. The slow
+    // JSON parse above ran lock-free (NeuralAmpModel is internally synchronised);
+    // only the fast coefficient/state update needs to exclude the audio thread.
+    if (ok && ch == params.channel)
+    {
+        const juce::ScopedLock sl(processLock);
+        updateFilters();
+        resetFilterStates();
+    }
     return ok;
 }
 
@@ -366,7 +375,12 @@ void AmpProcessor::clearNeuralModel(Channel ch)
         case Channel::Crunch: neuralCrunch.clear(); break;
         case Channel::Lead:   neuralLead  .clear(); break;
     }
-    if (ch == params.channel) { updateFilters(); resetFilterStates(); }
+    if (ch == params.channel)
+    {
+        const juce::ScopedLock sl(processLock);
+        updateFilters();
+        resetFilterStates();
+    }
 }
 
 bool AmpProcessor::hasNeuralModel(Channel ch) const noexcept
@@ -531,6 +545,10 @@ float AmpProcessor::processPowerAmpSample(float x) noexcept
 
 void AmpProcessor::process(juce::AudioBuffer<float>& buffer)
 {
+    // Hold the lock for the whole block so coefficients/state can't be mutated
+    // mid-process by a param change or model (re)load on another thread.
+    const juce::ScopedLock sl(processLock);
+
     const int numSamples = buffer.getNumSamples();
     const int numCh      = buffer.getNumChannels();
     float* ch0 = buffer.getWritePointer(0);

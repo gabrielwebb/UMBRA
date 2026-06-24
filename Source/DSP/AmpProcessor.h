@@ -291,4 +291,10 @@ private:
 
     double sampleRate = 44100.0;
     Params params;
+
+    // Guards filter coefficients/state against concurrent mutation. The audio
+    // thread holds it across process(); param changes and model (re)loads hold
+    // it while reassigning coefficients or resetting filter state. JUCE's
+    // CriticalSection is recursive, so nested locks on one thread are fine.
+    juce::CriticalSection processLock;
 };
