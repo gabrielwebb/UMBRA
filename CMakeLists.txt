@@ -34,7 +34,7 @@ juce_add_gui_app(UMBRA
     PRODUCT_NAME        "UMBRA"
     VERSION             "1.0.0"
     BUNDLE_ID           "com.ampsim.umbra"
-    ICON_BIG            ""
+    ICON_BIG            "${CMAKE_SOURCE_DIR}/docs/icon.png"
     MICROPHONE_PERMISSION_ENABLED  TRUE
     MICROPHONE_PERMISSION_TEXT     "UMBRA needs access to your audio input."
 )
